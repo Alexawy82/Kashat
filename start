@@ -326,7 +326,7 @@ start_web() {
         export PORT="$port"
         # Derive API base from running backend port if available
         backend_port="$(cat "$BACKEND_PORT_FILE" 2>/dev/null || echo "$BACKEND_BASE_PORT")"
-        export NEXT_PUBLIC_API_BASE="http://127.0.0.1:${backend_port}/api"
+        export NEXT_PUBLIC_API_BASE="${NEXT_PUBLIC_API_BASE:-http://127.0.0.1:${backend_port}/api}"
         # Feature flag for new UI flows (default off)
         export NEXT_PUBLIC_LEDGERLOOP_UI_V1_COMPLETE="${NEXT_PUBLIC_LEDGERLOOP_UI_V1_COMPLETE:-false}"
         exec npm run dev -- -p "$port" 2>&1
