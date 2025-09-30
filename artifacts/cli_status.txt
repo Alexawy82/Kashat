@@ -1,0 +1,1 @@
+CLI Status: Custom CLI not functional due to import mismatches. Testing direct API commands instead.

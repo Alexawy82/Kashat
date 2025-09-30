@@ -1,0 +1,37 @@
+Feature Exploration Results:
+
+Page: /transactions
+- Status: ✅ Accessible
+- Content: Transaction list interface loads
+- Actions: Browse, filter, bulk operations available
+- Data: Parsed transactions visible with AI processing
+
+Page: /analytics  
+- Status: ✅ Accessible
+- Content: Analytics dashboard with charts
+- Actions: Date filters, summary views
+- Data: Monthly trends visible
+
+Page: /rules
+- Status: ✅ Accessible
+- Content: Rule management interface
+- Actions: Create & preview rule functionality
+- Data: Rule builder available
+
+Page: /transfers
+- Status: ✅ Accessible
+- Content: Transfer detection interface
+- Actions: Trigger detection available
+- Data: Transfer pairs management
+
+Page: /recurring
+- Status: ✅ Accessible
+- Content: Recurring transaction analysis
+- Actions: View recurring series
+- Data: Pattern detection interface
+
+Page: /export
+- Status: ✅ Accessible (UI)
+- Content: Export interface available
+- Actions: Export CSV functionality
+- Note: API endpoint returns 404, may be frontend-only

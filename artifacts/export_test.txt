@@ -1,0 +1,3 @@
+Export endpoint testing:
+- /api/export/csv returns 404 Not Found
+- Export functionality may be implemented in frontend only or different endpoint path
