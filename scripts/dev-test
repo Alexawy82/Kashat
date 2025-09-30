@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ARTIFACTS="$ROOT_DIR/artifacts"
+mkdir -p "$ARTIFACTS"
+
+echo "[dev-test] Running backend unit tests..."
+(
+  source "$ROOT_DIR/.venv/bin/activate" 2>/dev/null || true
+  export PYTHONPATH="$ROOT_DIR/apps/backend/src"
+  python -m unittest apps/backend/tests/test_endpoints_analytics_export.py -v | tee "$ARTIFACTS/backend-tests.log"
+) || true
+
+echo "[dev-test] Verifying app via script..."
+bash "$ROOT_DIR/scripts/verify-app.sh" | tee "$ARTIFACTS/verify-dev-test.log" || true
+
+echo "[dev-test] Done. See artifacts/*.log"
