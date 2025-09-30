@@ -18,6 +18,7 @@ Frontend
 - New hooks: useAnalyticsSummary/useAnalyticsPredictions with memoization and manual invalidation.
 - Export page wired to new CSV endpoint and shows last 5 export events.
 - Transactions show AI confidence chip and a lineage badge.
+- Data Management: new Settings subsection for import runs — list runs/files/periods, bulk upload, reprocess runs, and delete runs. Ingest page now supports bulk uploads.
 
 Compatibility
 - All new UI is behind a feature flag; when OFF, legacy behavior remains.

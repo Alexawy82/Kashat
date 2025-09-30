@@ -391,3 +391,16 @@ def _upgrade_schema(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute("ALTER TABLE event_log RENAME COLUMN by TO actor")
     except Exception:
         pass
+    # Track ingestion linkage for safe deletions and analytics per run/file
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transaction_ingest (
+                tx_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                file_id TEXT
+            )
+            """
+        )
+    except Exception:
+        pass

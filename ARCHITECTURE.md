@@ -143,6 +143,7 @@
 - API: `GET /api/analytics/predictions` — heuristic budget risk/savings/recurring with explanations and 120s cache.
 - API: `GET /api/export/csv` — streaming CSV export, `Content-Disposition` filename includes date range, logs `export:csv` to `event_log`.
 - Frontend: `useAnalyticsSummary()` and `useAnalyticsPredictions()` hooks; `/export` page wired to new CSV export and shows export history from audit log.
+- Data Management: import runs/files tracking with `transaction_ingest` mapping. Endpoints: `/api/import/runs`, `/api/import/runs/{run_id}/files`, `/summary`, `DELETE /runs/{run_id}`, `POST /runs/{run_id}/reprocess`, and bulk uploads via `POST /api/import/bulk`.
 
 ### Background Services
 - **RealtimeProcessor**: WebSocket event broadcasting

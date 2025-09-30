@@ -107,6 +107,13 @@ python -m ledgerloop.cli detect recurring
 2. Export transactions as CSV
 3. Verify file content
 
+### Data Management
+1. Visit http://localhost:3000/settings/data-management
+2. Bulk upload mixed CSV/PDF files; verify new run appears with correct file counts, tx_count, and period
+3. Select a run; verify files list and “story by month” summary
+4. Reprocess run; confirm status 200; analytics should refresh
+5. Delete run; confirm transactions linked to that run are removed
+
 #### CLI Export
 ```bash
 python -m ledgerloop.cli export csv -o test_export.csv
