@@ -252,6 +252,8 @@ start_backend() {
         export LEDGERLOOP_AI_BATCH_SIZE="${LEDGERLOOP_AI_BATCH_SIZE:-10}"
         # Dev bypass for admin token (do not use in production)
         export LEDGERLOOP_DEV_ALLOW_ADMIN="${LEDGERLOOP_DEV_ALLOW_ADMIN:-true}"
+        # Pass through UI feature flag (optional backend behavior)
+        export LEDGERLOOP_UI_V1_COMPLETE="${LEDGERLOOP_UI_V1_COMPLETE:-false}"
         exec uvicorn ledgerloop.api.main:app \
             --host 127.0.0.1 \
             --port "$port" \
