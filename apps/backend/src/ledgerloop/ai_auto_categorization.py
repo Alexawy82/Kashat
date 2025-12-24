@@ -313,7 +313,7 @@ class AutoCategorizationService:
 
             # Check if we already have this mapping
             existing = conn.execute(
-                "SELECT id FROM merchant_category_mapping WHERE LOWER(merchant_key) = LOWER(?)",
+                "SELECT id FROM merchant_category_mapping WHERE LOWER(merchant_pattern) = LOWER(?)",
                 [merchant_key]
             ).fetchone()
 
@@ -322,17 +322,18 @@ class AutoCategorizationService:
                 conn.execute("""
                     UPDATE merchant_category_mapping
                     SET confidence = CASE WHEN confidence < ? THEN ? ELSE confidence END,
-                        match_count = match_count + 1
-                    WHERE LOWER(merchant_key) = LOWER(?)
-                """, [confidence, confidence, merchant_key])
+                        usage_count = usage_count + 1,
+                        last_used = ?
+                    WHERE LOWER(merchant_pattern) = LOWER(?)
+                """, [confidence, confidence, datetime.now(UTC), merchant_key])
                 logger.info(f"Updated learned pattern: {merchant_key} -> {category_name}")
             else:
                 # Insert new mapping
                 import uuid
                 conn.execute("""
-                    INSERT INTO merchant_category_mapping (id, merchant_key, category_id, confidence, match_count, source)
-                    VALUES (?, ?, ?, ?, 1, 'ai_learned')
-                """, [str(uuid.uuid4()), merchant_key, category_id, confidence])
+                    INSERT INTO merchant_category_mapping (id, merchant_name, merchant_pattern, category_id, confidence, usage_count, created_at)
+                    VALUES (?, ?, ?, ?, ?, 1, ?)
+                """, [str(uuid.uuid4()), merchant_key, merchant_key, category_id, confidence, datetime.now(UTC)])
                 logger.info(f"Learned new pattern: {merchant_key} -> {category_name} ({confidence:.2f})")
 
         except Exception as e:
