@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from typing import Optional, List
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from ...db import get_conn
-from ...ai_analytics import get_ai_analytics_engine
-from ...ai_forecasting import get_ai_forecasting_engine
+# Heavy AI modules are imported lazily inside endpoint handlers to reduce import overhead
 
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -39,7 +38,10 @@ def monthly_summary(
     account_id: Optional[str] = Query(None),
 ):
     conn = get_conn()
-    where = ["NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)"]
+    where = [
+        "NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)",
+        "(t.is_adjustment IS FALSE OR t.is_adjustment IS NULL)",
+    ]
     params = []
     if start_date:
         where.append("t.posted_at >= ?")
@@ -57,7 +59,7 @@ def monthly_summary(
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
         {wh}
         GROUP BY 1
@@ -76,7 +78,10 @@ def category_monthly(
     account_id: Optional[str] = Query(None),
 ):
     conn = get_conn()
-    where = ["NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)"]
+    where = [
+        "NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)",
+        "(t.is_adjustment IS FALSE OR t.is_adjustment IS NULL)",
+    ]
     params = []
     if start_date:
         where.append("t.posted_at >= ?")
@@ -94,7 +99,7 @@ def category_monthly(
                c.id as category_id,
                c.name as category_name,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
@@ -116,7 +121,10 @@ def merchant_summary(
     limit: int = Query(100, ge=1, le=1000),
 ):
     conn = get_conn()
-    where = ["NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)"]
+    where = [
+        "NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)",
+        "(t.is_adjustment IS FALSE OR t.is_adjustment IS NULL)",
+    ]
     params = []
     if start_date:
         where.append("t.posted_at >= ?")
@@ -133,7 +141,7 @@ def merchant_summary(
         SELECT t.description_norm as merchant,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                COUNT(*) as count
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
         {wh}
         GROUP BY 1
@@ -174,7 +182,7 @@ def cashflow(
             SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
             SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS debits,
             SUM(t.amount) AS net
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
         {wh}
         """,
@@ -213,8 +221,8 @@ def summary(
         params.append(end_date)
     join_mt = "LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL"
     if not include_transfers:
-        # Exclude confirmed transfers entirely
-        where.append("(mt.left_tx_id IS NULL AND mt.right_tx_id IS NULL)")
+        # Exclude confirmed transfers unless explicitly included in analytics
+        where.append("NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)")
 
     wh = (" WHERE " + " AND ".join(where)) if where else ""
 
@@ -225,7 +233,7 @@ def summary(
             SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
             SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
             SUM(t.amount) AS net
-        FROM transaction t
+        FROM [transaction] t
         {join_mt}
         {wh}
         """,
@@ -241,7 +249,7 @@ def summary(
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net
-        FROM transaction t
+        FROM [transaction] t
         {join_mt}
         {wh}
         GROUP BY 1
@@ -259,7 +267,7 @@ def summary(
                c.name as category_name,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                COUNT(*) as count
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         {join_mt}
@@ -278,7 +286,7 @@ def summary(
         SELECT t.description_norm as merchant,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                COUNT(*) as count
-        FROM transaction t
+        FROM [transaction] t
         {join_mt}
         {wh}
         GROUP BY 1
@@ -300,12 +308,20 @@ def summary(
     return result
 
 
+ 
+
+
 @router.get("/recurring")
 def recurring_series():
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT id, name as payee, cadence, amount_mean as avg_amount, amount_sd as variance, last_date, next_date, price_hike FROM recurring_series WHERE status IN ('pending','confirmed') ORDER BY name"
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            "SELECT id, COALESCE(display_name, name) as payee, cadence, amount_mean as avg_amount, amount_sd as variance, last_date, next_date, price_hike FROM recurring_series WHERE status IN ('pending','confirmed') AND NOT regexp_matches(lower(COALESCE(display_name, name)), '(online banking transfer|automatic transfer)') ORDER BY payee"
+        ).fetchall()
+    except Exception:
+        rows = conn.execute(
+            "SELECT id, name as payee, cadence, amount_mean as avg_amount, amount_sd as variance, last_date, next_date, price_hike FROM recurring_series WHERE status IN ('pending','confirmed') AND NOT regexp_matches(lower(name), '(online banking transfer|automatic transfer)') ORDER BY name"
+        ).fetchall()
     cols = [c[0] for c in conn.description]
     return [dict(zip(cols, r)) for r in rows]
 
@@ -319,6 +335,7 @@ async def get_spending_patterns(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered spending pattern analysis"""
+    from ...ai_analytics import get_ai_analytics_engine
     analytics_engine = get_ai_analytics_engine()
     
     patterns = analytics_engine.analyze_spending_patterns(
@@ -374,8 +391,8 @@ def predictions(
         where.append("t.posted_at <= ?")
         params.append(end_date)
     join_mt = "LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL"
-    # exclude transfers by default from predictions budget math
-    where.append("(mt.left_tx_id IS NULL AND mt.right_tx_id IS NULL)")
+    # exclude confirmed transfers unless explicitly included in analytics
+    where.append("NOT (mt.decided_at IS NOT NULL AND COALESCE(mt.include_in_analytics, FALSE) = FALSE)")
     wh = " WHERE " + " AND ".join(where)
 
     # Aggregate spend per category and merchant for heuristics
@@ -384,7 +401,7 @@ def predictions(
         SELECT COALESCE(c.name,'Uncategorized') AS category,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                COUNT(*) as count
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         {join_mt}
@@ -403,7 +420,7 @@ def predictions(
         SELECT date_trunc('month', t.posted_at) AS month,
                COALESCE(c.name,'Uncategorized') AS category,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         {join_mt}
@@ -448,7 +465,7 @@ def predictions(
                COALESCE(c.name,'Uncategorized') AS category,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                LIST(t.id) AS tx_ids
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         {join_mt}
@@ -503,6 +520,7 @@ async def get_trend_analysis(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered trend analysis"""
+    from ...ai_analytics import get_ai_analytics_engine
     analytics_engine = get_ai_analytics_engine()
     
     trends = analytics_engine.analyze_trends(
@@ -539,6 +557,7 @@ async def get_anomaly_detection(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered anomaly detection"""
+    from ...ai_analytics import get_ai_analytics_engine
     analytics_engine = get_ai_analytics_engine()
     
     anomalies = analytics_engine.detect_anomalies(
@@ -578,6 +597,7 @@ async def get_spending_forecast(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered spending forecast"""
+    from ...ai_forecasting import get_ai_forecasting_engine
     forecasting_engine = get_ai_forecasting_engine()
     
     forecast = forecasting_engine.forecast_spending(
@@ -621,6 +641,7 @@ async def get_income_forecast(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered income forecast"""
+    from ...ai_forecasting import get_ai_forecasting_engine
     forecasting_engine = get_ai_forecasting_engine()
     
     forecast = forecasting_engine.forecast_income(
@@ -662,6 +683,7 @@ async def get_cashflow_projection(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered cash flow projection with scenarios"""
+    from ...ai_forecasting import get_ai_forecasting_engine
     forecasting_engine = get_ai_forecasting_engine()
     
     projection = forecasting_engine.project_cashflow(
@@ -703,6 +725,7 @@ async def get_category_spending_prediction(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-powered spending prediction for a specific category"""
+    from ...ai_forecasting import get_ai_forecasting_engine
     forecasting_engine = get_ai_forecasting_engine()
     
     prediction = forecasting_engine.predict_category_spending(
@@ -735,6 +758,8 @@ class InsightRequest(BaseModel):
 @router.post("/ai/comprehensive-insights")
 async def get_comprehensive_insights(request: InsightRequest):
     """Get comprehensive AI-powered financial insights"""
+    from ...ai_analytics import get_ai_analytics_engine
+    from ...ai_forecasting import get_ai_forecasting_engine
     analytics_engine = get_ai_analytics_engine()
     forecasting_engine = get_ai_forecasting_engine()
     
@@ -845,6 +870,8 @@ async def get_ai_dashboard_summary(
     account_id: Optional[str] = Query(None)
 ):
     """Get AI-enhanced dashboard summary for quick overview"""
+    from ...ai_analytics import get_ai_analytics_engine
+    from ...ai_forecasting import get_ai_forecasting_engine
     analytics_engine = get_ai_analytics_engine()
     forecasting_engine = get_ai_forecasting_engine()
     
@@ -885,7 +912,7 @@ async def dashboard(
     end_date: Optional[date] = Query(None),
     account_id: Optional[str] = Query(None),
     merchants_limit: int = Query(10, ge=1, le=1000),
-    include_ai: bool = Query(True),
+    include_ai: bool = Query(False),
 ):
     """Aggregated dashboard payload with comparisons and KPIs.
 
@@ -923,7 +950,7 @@ async def dashboard(
                 SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                 SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS debits,
                 SUM(t.amount) AS net
-            FROM transaction t
+            FROM [transaction] t
             LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
             {wh}
             """,
@@ -957,7 +984,7 @@ async def dashboard(
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
         WHERE t.posted_at >= ? AND t.posted_at <= ?
         """ + _where_acc + """
@@ -980,7 +1007,7 @@ async def dashboard(
         SELECT t.description_norm as merchant,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                COUNT(*) as count
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
         WHERE t.posted_at >= ? AND t.posted_at <= ?
         """ + _where_acc + """
@@ -1005,7 +1032,7 @@ async def dashboard(
                c.name as category_name,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                COUNT(*) as count
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
@@ -1027,6 +1054,13 @@ async def dashboard(
             "previous_start": prev_start,
             "previous_end": prev_end,
         },
+        # Simple summary block for tests/UI expecting a top-level summary
+        "summary": {
+            "income": cur_cf["income"],
+            "spending": cur_cf["debits"],
+            "net": cur_cf["net"],
+            "savings_rate_pct": round(savings_rate, 2),
+        },
         "cashflow": {
             "income": _delta(cur_cf["income"], prev_cf["income"]),
             "spending": _delta(cur_cf["debits"], prev_cf["debits"]),
@@ -1039,6 +1073,7 @@ async def dashboard(
     }
 
     if include_ai:
+        from ...ai_analytics import get_ai_analytics_engine
         analytics_engine = get_ai_analytics_engine()
         try:
             patterns = analytics_engine.analyze_spending_patterns(start_date=start_date, end_date=end_date, account_id=account_id)
@@ -1068,3 +1103,119 @@ async def dashboard(
             result["ai"] = {"error": "ai_unavailable"}
 
     return result
+
+
+# Phase 1 Predictive Analytics Endpoints
+
+@router.get("/predictive/patterns")
+async def get_predictive_patterns(
+    account_id: str = Query("default"),
+    force_refresh: bool = Query(False)
+):
+    """Get enhanced spending patterns with prediction capabilities"""
+    try:
+        from ...analytics.predictive_engine import get_predictive_engine
+        engine = get_predictive_engine()
+        patterns = engine.analyze_spending_patterns(account_id, force_refresh)
+        return {
+            "patterns": [
+                {
+                    "category_id": p.category_id,
+                    "category_name": p.category_name,
+                    "monthly_average": round(p.monthly_avg, 2),
+                    "trend_factor": round(p.trend_factor, 4),
+                    "seasonal_factors": {k: round(v, 3) for k, v in p.seasonal_factors.items()},
+                    "volatility": round(p.volatility, 3),
+                    "confidence": round(p.confidence, 3),
+                    "pattern_type": p.pattern_type,
+                    "predictability": "High" if p.confidence > 0.7 else "Medium" if p.confidence > 0.4 else "Low"
+                }
+                for p in patterns
+            ],
+            "total_patterns": len(patterns),
+            "analysis_date": date.today().isoformat()
+        }
+    except Exception:
+        return {
+            "patterns": [],
+            "total_patterns": 0,
+            "analysis_date": date.today().isoformat(),
+            "error": "Predictive patterns unavailable"
+        }
+
+
+@router.get("/predictive/cashflow-forecast")
+async def get_cashflow_forecast(
+    account_id: str = Query("default"),
+    months: int = Query(6, ge=1, le=12)
+):
+    """Get predictive cash flow forecast"""
+    try:
+        from ...analytics.predictive_engine import get_predictive_engine
+        engine = get_predictive_engine()
+        predictions = engine.forecast_cash_flow(account_id, months)
+        return {
+            "forecast": [
+                {
+                    "month": p.target_month,
+                    "predicted_income": round(p.predicted_income, 2),
+                    "predicted_spending": round(p.predicted_spending, 2),
+                    "net_cash_flow": round(p.net_cash_flow, 2),
+                    "spending_by_category": {k: round(v, 2) for k, v in p.spending_breakdown.items()},
+                    "confidence": round(p.confidence, 3),
+                    "methodology": p.methodology,
+                    "assumptions": p.assumptions
+                }
+                for p in predictions
+            ],
+            "forecast_horizon_months": months,
+            "generated_at": datetime.now().isoformat()
+        }
+    except Exception:
+        return {
+            "forecast": [],
+            "forecast_horizon_months": months,
+            "generated_at": datetime.now().isoformat(),
+            "error": "Cashflow forecast unavailable"
+        }
+
+
+@router.get("/predictive/insights")
+async def get_smart_insights(
+    account_id: str = Query("default"),
+    include_read: bool = Query(False)
+):
+    """Get smart financial insights and alerts"""
+    try:
+        engine = get_predictive_engine()
+        insights = engine.generate_smart_insights(account_id)
+        
+        return {
+            "insights": [
+                {
+                    "type": i.insight_type,
+                    "priority": i.priority,
+                    "title": i.title,
+                    "message": i.message,
+                    "amount": round(i.amount, 2) if i.amount else None,
+                    "category_id": i.category_id,
+                    "transaction_id": i.transaction_id,
+                    "action_text": i.action_text,
+                    "valid_until": i.valid_until.isoformat() if i.valid_until else None,
+                    "severity": "high" if i.priority >= 8 else "medium" if i.priority >= 6 else "low"
+                }
+                for i in insights
+            ],
+            "total_insights": len(insights),
+            "high_priority_count": len([i for i in insights if i.priority >= 8]),
+            "generated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        # Return empty insights if tables don't exist or other errors
+        return {
+            "insights": [],
+            "total_insights": 0,
+            "high_priority_count": 0,
+            "generated_at": datetime.now().isoformat(),
+            "error": "Predictive analytics not available yet - need more transaction data"
+        }

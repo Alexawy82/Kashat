@@ -147,7 +147,7 @@ def list_import_runs(limit: int = 20):
         FROM import_run ir
         LEFT JOIN import_file f ON f.run_id = ir.id
         LEFT JOIN transaction_ingest ti ON ti.run_id = ir.id
-        LEFT JOIN transaction t ON t.id = ti.tx_id
+        LEFT JOIN [transaction] t ON t.id = ti.tx_id
         GROUP BY ir.id, ir.started_at
         ORDER BY ir.started_at DESC
         LIMIT ?
@@ -179,7 +179,7 @@ def list_import_files(limit: int = 100):
                MAX(t.posted_at) AS period_end
         FROM import_file f
         LEFT JOIN transaction_ingest ti ON ti.file_id = f.id
-        LEFT JOIN transaction t ON t.id = ti.tx_id
+        LEFT JOIN [transaction] t ON t.id = ti.tx_id
         GROUP BY f.id, f.run_id, f.path, f.type, f.hash
         ORDER BY period_end DESC NULLS LAST
         LIMIT ?
@@ -204,7 +204,7 @@ def list_import_periods():
             MAX(t.posted_at) AS last_tx,
             SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS total_spend,
             SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS total_income
-        FROM transaction t
+        FROM [transaction] t
         JOIN transaction_ingest ti ON ti.tx_id = t.id
         WHERE t.posted_at IS NOT NULL
         GROUP BY 1
@@ -226,7 +226,7 @@ def list_run_files(run_id: str):
                MAX(t.posted_at) AS period_end
         FROM import_file f
         LEFT JOIN transaction_ingest ti ON ti.file_id = f.id
-        LEFT JOIN transaction t ON t.id = ti.tx_id
+        LEFT JOIN [transaction] t ON t.id = ti.tx_id
         WHERE f.run_id = ?
         GROUP BY f.id, f.path, f.type
         ORDER BY f.path
@@ -247,7 +247,7 @@ def run_monthly_summary(run_id: str):
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net,
                COUNT(*) AS count
-        FROM transaction t
+        FROM [transaction] t
         JOIN transaction_ingest ti ON ti.tx_id = t.id AND ti.run_id = ?
         GROUP BY 1 ORDER BY 1
         """,
@@ -292,7 +292,7 @@ def delete_run(run_id: str):
         _delete_in("match_transfer", "left_tx_id", tx_ids, or_second=("left_tx_id","right_tx_id"))
         _delete_in("recurring_tx", "tx_id", tx_ids)
         _delete_in("transaction_tag", "tx_id", tx_ids)
-        _delete_in("transaction", "id", tx_ids)
+        _delete_in([transaction], "id", tx_ids)
         _delete_in("transaction_ingest", "tx_id", tx_ids)
     # delete raw_records and files by run id to avoid FK mismatch
     try:
@@ -331,7 +331,7 @@ def reprocess_run(run_id: str, background_tasks: BackgroundTasks, account_id: Op
     conn = get_conn()
     # Try to infer account from one transaction
     row = conn.execute(
-        "SELECT t.account_id FROM transaction t JOIN transaction_ingest ti ON ti.tx_id = t.id WHERE ti.run_id = ? LIMIT 1",
+        "SELECT t.account_id FROM [transaction] t JOIN transaction_ingest ti ON ti.tx_id = t.id WHERE ti.run_id = ? LIMIT 1",
         [run_id],
     ).fetchone()
     acc = account_id or (row[0] if row else None)
@@ -403,7 +403,7 @@ async def import_bulk(
                 """
                 SELECT 1 FROM import_file f
                 JOIN transaction_ingest ti ON ti.file_id = f.id
-                JOIN transaction t ON t.id = ti.tx_id
+                JOIN [transaction] t ON t.id = ti.tx_id
                 WHERE f.hash = ? AND t.account_id = ? LIMIT 1
                 """,
                 [digest, acc_id],
@@ -432,7 +432,7 @@ async def import_bulk(
                     """
                     SELECT f.id, f.run_id FROM import_file f
                     JOIN transaction_ingest ti ON ti.file_id = f.id
-                    JOIN transaction t ON t.id = ti.tx_id
+                    JOIN [transaction] t ON t.id = ti.tx_id
                     WHERE f.logical_hash = ? AND f.id != ? AND t.account_id = ?
                     LIMIT 1
                     """,
@@ -635,7 +635,7 @@ async def _process_import_with_ai(run_id: str, account_id: str):
         # Get transactions from this import run
         transactions = conn.execute("""
             SELECT t.id, t.description_norm, t.amount, t.posted_at
-            FROM transaction t
+            FROM [transaction] t
             JOIN import_run ir ON ir.id = ?
             WHERE t.account_id = ?
             AND t.created_at >= ir.started_at
@@ -716,7 +716,7 @@ async def _run_builtin_detectors(account_id: str):
     try:
         conn = get_conn()
         # Zelle: scan and tag this account's transactions
-        rows = conn.execute("SELECT id, description_norm FROM transaction WHERE account_id = ?", [account_id]).fetchall()
+        rows = conn.execute("SELECT id, description_norm FROM [transaction] WHERE account_id = ?", [account_id]).fetchall()
         tagged = 0
         for tx_id, desc in rows:
             info = parse_zelle_descriptor(desc or "")
@@ -724,18 +724,18 @@ async def _run_builtin_detectors(account_id: str):
                 continue
             conn.execute("INSERT INTO transaction_tag (tx_id, tag) VALUES (?, ?) ON CONFLICT DO NOTHING", [tx_id, "zelle"])
             if info.get("direction"):
-                conn.execute("UPDATE transaction SET zelle_direction = ? WHERE id = ?", [info["direction"], tx_id])
+                conn.execute("UPDATE [transaction] SET zelle_direction = ? WHERE id = ?", [info["direction"], tx_id])
             if info.get("counterparty"):
-                conn.execute("UPDATE transaction SET zelle_counterparty = ? WHERE id = ?", [info["counterparty"], tx_id])
+                conn.execute("UPDATE [transaction] SET zelle_counterparty = ? WHERE id = ?", [info["counterparty"], tx_id])
             tagged += 1
         # Income
-        rows = conn.execute("SELECT id, posted_at, amount, description_norm FROM transaction WHERE account_id = ?", [account_id]).fetchall()
+        rows = conn.execute("SELECT id, posted_at, amount, description_norm FROM [transaction] WHERE account_id = ?", [account_id]).fetchall()
         records = [{"id": r[0], "posted_at": r[1], "amount": r[2], "description_norm": r[3]} for r in rows]
         for tx_id in mark_income(records):
-            conn.execute("UPDATE transaction SET is_income = TRUE WHERE id = ?", [tx_id])
+            conn.execute("UPDATE [transaction] SET is_income = TRUE WHERE id = ?", [tx_id])
         # Adjustments
         for tx_id in mark_adjustments(records):
-            conn.execute("UPDATE transaction SET is_adjustment = TRUE WHERE id = ?", [tx_id])
+            conn.execute("UPDATE [transaction] SET is_adjustment = TRUE WHERE id = ?", [tx_id])
 
         # Recurring detection: auto-detect recurring patterns and create pending series
         try:
@@ -769,7 +769,7 @@ async def get_import_ai_analysis(run_id: str):
     # Get AI-enhanced transactions
     ai_transactions = conn.execute("""
         SELECT t.id, t.description_norm, t.ai_merchant_name, t.ai_confidence_score
-        FROM transaction t
+        FROM [transaction] t
         JOIN import_run ir ON ir.id = ?
         WHERE t.ai_merchant_name IS NOT NULL
         AND t.created_at >= ir.started_at
@@ -810,7 +810,7 @@ async def suggest_rules_from_import(request: RuleSuggestionRequest):
     # Get AI-enhanced transactions from the run
     transactions = conn.execute("""
         SELECT t.description_norm, t.ai_merchant_name, tc.category_id, c.name as category_name
-        FROM transaction t
+        FROM [transaction] t
         JOIN import_run ir ON ir.id = ?
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
@@ -890,7 +890,7 @@ def _ensure_import_file_logical_hash(file_id: str) -> str | None:
     rows = conn.execute(
         """
         SELECT t.posted_at, t.amount, COALESCE(t.description_norm, '')
-        FROM transaction t
+        FROM [transaction] t
         JOIN transaction_ingest ti ON ti.tx_id = t.id
         WHERE ti.file_id = ?
         ORDER BY t.posted_at, t.amount, t.description_norm

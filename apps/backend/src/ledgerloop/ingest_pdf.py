@@ -3,10 +3,16 @@ from __future__ import annotations
 import io
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any
 
 from .normalization import normalize_description, parse_date, currency_or_default
+import hashlib
+
+def _sha256(data: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(data)
+    return h.hexdigest()
 from .dedup import tx_fingerprint
 from .parse.banks.boa_v2025 import parse_boa_pdf
 
@@ -27,7 +33,7 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
     from .db import get_conn
 
     conn = get_conn()
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     created_run = False
     if not run_id:
         run_id = str(uuid.uuid4())
@@ -40,9 +46,10 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
             "INSERT INTO import_run (id, started_at, source, user_note) VALUES (?, ?, ?, ?)",
             [run_id, now, "upload:pdf", filename],
         )
+    digest = _sha256(file_bytes)
     conn.execute(
-        "INSERT OR IGNORE INTO import_file (id, run_id, path, hash, type) VALUES (?, ?, ?, ?, ?)",
-        [file_id, run_id, filename, None, "pdf"],
+        "INSERT INTO import_file (id, run_id, path, hash, type) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        [file_id, run_id, filename, digest, "pdf"],
     )
 
     inserted = 0
@@ -64,7 +71,7 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
             try:
                 conn.execute(
                     """
-                    INSERT INTO transaction (
+                    INSERT INTO [transaction] (
                         id, account_id, posted_at, amount, currency, description_norm,
                         external_id, fingerprint, source_raw_id, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -79,12 +86,12 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
             else:
                 try:
                     conn.execute(
-                        "INSERT OR REPLACE INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?)",
+                        "INSERT INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?) ON CONFLICT (tx_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_id = EXCLUDED.file_id",
                         [tx_id, run_id, file_id],
                     )
                 except Exception:
                     pass
-        return {"run_id": run_id, "file_id": file_id, "inserted": inserted, "deduped": deduped, "raw": raw_count, "parser": "boa_v2025"}
+        return {"run_id": run_id, "file_id": file_id, "inserted": inserted, "deduped": deduped, "raw": raw_count, "parser": "boa_v2025", "hash": digest}
     except Exception:
         pass
 
@@ -107,7 +114,7 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
         try:
             conn.execute(
                 """
-                INSERT INTO transaction (
+                INSERT INTO [transaction] (
                     id, account_id, posted_at, amount, currency, description_norm,
                     external_id, fingerprint, source_raw_id, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -122,10 +129,10 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
         else:
             try:
                 conn.execute(
-                    "INSERT OR REPLACE INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?)",
+                    "INSERT INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?) ON CONFLICT (tx_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_id = EXCLUDED.file_id",
                     [tx_id, run_id, file_id],
                 )
             except Exception:
                 pass
 
-    return {"run_id": run_id, "file_id": file_id, "inserted": inserted, "deduped": deduped, "raw": raw_count, "parser": "fallback"}
+    return {"run_id": run_id, "file_id": file_id, "inserted": inserted, "deduped": deduped, "raw": raw_count, "parser": "fallback", "hash": digest}

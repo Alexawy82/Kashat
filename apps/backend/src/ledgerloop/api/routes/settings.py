@@ -34,7 +34,7 @@ class SettingsBody(BaseModel):
     dashboard_show_ai: bool | None = None
     # Runtime
     realtime_enabled: bool | None = None
-    duckdb_threads: int | None = None
+    sqlite_wal_mode: bool | None = None
 
 
 @router.get("")
@@ -89,11 +89,8 @@ def set_settings(body: SettingsBody):
     # Runtime
     if body.realtime_enabled is not None:
         s["realtime_enabled"] = bool(body.realtime_enabled)
-    if body.duckdb_threads is not None:
-        try:
-            s["duckdb_threads"] = max(0, int(body.duckdb_threads))
-        except Exception:
-            pass
+    if body.sqlite_wal_mode is not None:
+        s["sqlite_wal_mode"] = bool(body.sqlite_wal_mode)
     save_settings(s)
     return s
 

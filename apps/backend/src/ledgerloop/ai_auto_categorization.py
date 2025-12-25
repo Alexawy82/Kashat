@@ -120,7 +120,7 @@ class AutoCategorizationService:
                                 "reasoning": s.reasoning
                             } for s in insights.category_suggestions[:3]])
                             conn.execute("""
-                                UPDATE transaction
+                                UPDATE [transaction]
                                 SET ai_category_suggestions = ?, ai_confidence_score = ?,
                                     ai_processed_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
@@ -209,7 +209,14 @@ class AutoCategorizationService:
                 "INSERT INTO transaction_category (tx_id, category_id, applied_by) VALUES (?, ?, ?)",
                 [transaction_id, category_result.category_id, "ai_auto_enhanced"]
             )
-            
+
+            # Store confidence score and merchant name on the transaction for UI display
+            merchant_name = getattr(suggestion, 'merchant_name', None)
+            conn.execute(
+                "UPDATE [transaction] SET ai_confidence_score = ?, ai_merchant_name = ? WHERE id = ?",
+                [suggestion.confidence, merchant_name, transaction_id]
+            )
+
             # Step 3: Log the auto-categorization
             self._log_auto_categorization(
                 transaction_id, category_result.category_id, suggestion.confidence,
@@ -369,7 +376,7 @@ class AutoCategorizationService:
         # Get uncategorized transactions WITH their stored AI suggestions
         query = """
             SELECT t.id, t.description_norm, t.amount, t.account_id, t.ai_category_suggestions
-            FROM transaction t
+            FROM [transaction] t
             LEFT JOIN transaction_category tc ON tc.tx_id = t.id
             WHERE tc.tx_id IS NULL
         """

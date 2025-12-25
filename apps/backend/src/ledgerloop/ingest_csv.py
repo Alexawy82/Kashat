@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Tuple
 from datetime import date
 
 
-# Avoid importing DB on module load to keep pure helpers testable without duckdb
+# Avoid importing DB on module load to keep pure helpers testable without sqlite3
 from .normalization import normalize_description, parse_amount, parse_date, currency_or_default
 from .dedup import tx_fingerprint
 
@@ -50,7 +50,7 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
 
     # Ensure account exists to satisfy FK
     conn.execute(
-        "INSERT OR IGNORE INTO account (id, name, type, currency) VALUES (?, ?, ?, ?)",
+        "INSERT INTO account (id, name, type, currency) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         [account_id, "Imported Account", "checking", "USD"],
     )
 
@@ -60,7 +60,7 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
             [run_id, now, "upload:csv", filename],
         )
     conn.execute(
-        "INSERT OR IGNORE INTO import_file (id, run_id, path, hash, type) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO import_file (id, run_id, path, hash, type) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
         [file_id, run_id, filename, digest, "csv"],
     )
 
@@ -71,8 +71,8 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
     inserted = 0
     deduped = 0
     raw_count = 0
-    # local import to avoid requiring duckdb for pure helper tests
-    import duckdb  # type: ignore
+    # local import to avoid requiring sqlite3 for pure helper tests
+    import sqlite3
 
     # Prepare NDJSON error report
     from .config import tmp_dir
@@ -96,7 +96,7 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
             try:
                 conn.execute(
                     """
-                    INSERT INTO transaction (
+                    INSERT INTO [transaction] (
                         id, account_id, posted_at, amount, currency, description_norm,
                         external_id, fingerprint, source_raw_id, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -118,7 +118,7 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
                 # Link transaction to ingest run/file for management
                 try:
                     conn.execute(
-                        "INSERT OR REPLACE INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?)",
+                        "INSERT INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?) ON CONFLICT (tx_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_id = EXCLUDED.file_id",
                         [tx_id, run_id, file_id],
                     )
                 except Exception:

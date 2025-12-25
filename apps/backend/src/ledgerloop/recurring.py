@@ -1179,7 +1179,7 @@ def merge_duplicate_merchants(conn) -> Dict[str, any]:
                     SELECT COUNT(*), AVG(t.amount), MIN(t.amount), MAX(t.amount),
                            MIN(t.posted_at), MAX(t.posted_at)
                     FROM recurring_tx r
-                    JOIN transaction t ON t.id = r.tx_id
+                    JOIN [transaction] t ON t.id = r.tx_id
                     WHERE r.series_id = ?
                     """,
                     [keep_id],
@@ -1190,7 +1190,7 @@ def merge_duplicate_merchants(conn) -> Dict[str, any]:
                     amounts = conn.execute(
                         """
                         SELECT t.amount FROM recurring_tx r
-                        JOIN transaction t ON t.id = r.tx_id
+                        JOIN [transaction] t ON t.id = r.tx_id
                         WHERE r.series_id = ?
                         """,
                         [keep_id],
@@ -1250,7 +1250,7 @@ def suggest_recurring(
         rows = conn.execute(
             """
             SELECT t.id, t.account_id, t.posted_at, t.amount, t.description_norm
-            FROM transaction t
+            FROM [transaction] t
             LEFT JOIN match_transfer mt
               ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id)
             WHERE mt.left_tx_id IS NULL AND mt.right_tx_id IS NULL
@@ -1265,7 +1265,7 @@ def suggest_recurring(
         rows = conn.execute(
             """
             SELECT t.id, t.account_id, t.posted_at, t.amount, t.description_norm
-            FROM transaction t
+            FROM [transaction] t
             LEFT JOIN match_transfer mt
               ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id)
             LEFT JOIN transaction_category tc ON tc.tx_id = t.id
@@ -1344,7 +1344,7 @@ def suggest_recurring(
         last_date = c.get("last_date")
         if not last_date:
             row = conn.execute(
-                "SELECT MAX(t.posted_at) FROM transaction t JOIN recurring_tx r ON r.tx_id = t.id WHERE r.series_id = ?",
+                "SELECT MAX(t.posted_at) FROM [transaction] t JOIN recurring_tx r ON r.tx_id = t.id WHERE r.series_id = ?",
                 [sid]
             ).fetchone()
             last_date = row[0] if row else None
@@ -1499,7 +1499,7 @@ def list_recurring(status: str = "pending") -> List[Dict]:
         LEFT JOIN recurring_tx rtx ON rtx.series_id = rs.id
         WHERE {where} AND {exclude_noise} AND {exclude_discretionary} AND {exclude_short_cadence}
         GROUP BY rs.id, rs.name, rs.display_name, rs.cadence, rs.anchor_day, rs.amount_mean, rs.amount_sd, rs.status, rs.decided_at, rs.last_date, rs.next_date, rs.price_hike, rs.prediction_confidence, rs.next_predicted_amount, rs.recurring_type, rs.sub_category, rs.is_essential, rs.annual_cost, rs.lender_name, rs.estimated_remaining, rs.predicted_end_date
-        ORDER BY COALESCE(rs.decided_at, TIMESTAMP '1970-01-01') DESC
+        ORDER BY COALESCE(rs.decided_at, '1970-01-01') DESC
         """
     ).fetchall()
     cols = [c[0] for c in conn.description]
@@ -1518,17 +1518,10 @@ def confirm_series(series_id: str) -> Dict[str, str]:
         return {"id": series_id, "status": "not_found", "error": "Series not found"}
 
     try:
-        # Use DELETE + INSERT to avoid DuckDB index corruption issues on UPDATE
+        # Use DELETE + INSERT to avoid index corruption issues on UPDATE
         conn.execute("DELETE FROM recurring_series WHERE id = ?", [series_id])
-        cols = [c[0] for c in conn.description] if conn.description else [
-            "id", "name", "cadence", "anchor_day", "amount_mean", "amount_sd", "rule_ref",
-            "status", "decided_at", "last_date", "next_date", "price_hike", "prediction_confidence",
-            "next_predicted_amount", "series_key", "display_name", "recurring_type", "sub_category",
-            "is_essential", "annual_cost", "predicted_end_date", "lender_name", "estimated_remaining",
-            "llm_confidence", "llm_provider", "llm_classified_at"
-        ]
-        # Get column names from DESCRIBE
-        cols = [c[0] for c in conn.execute("DESCRIBE recurring_series").fetchall()]
+        # Get column names from PRAGMA table_info
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(recurring_series)").fetchall()]
         row_dict = dict(zip(cols, row))
         row_dict["status"] = "confirmed"
         row_dict["decided_at"] = now
@@ -1565,9 +1558,10 @@ def reject_series(series_id: str) -> Dict[str, str]:
         return {"id": series_id, "status": "not_found", "error": "Series not found"}
 
     try:
-        # Use DELETE + INSERT to avoid DuckDB index corruption issues on UPDATE
+        # Use DELETE + INSERT to avoid index corruption issues on UPDATE
         conn.execute("DELETE FROM recurring_series WHERE id = ?", [series_id])
-        cols = [c[0] for c in conn.execute("DESCRIBE recurring_series").fetchall()]
+        # Get column names from PRAGMA table_info
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(recurring_series)").fetchall()]
         row_dict = dict(zip(cols, row))
         row_dict["status"] = "rejected"
         if row_dict.get("decided_at") is None:

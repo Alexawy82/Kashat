@@ -33,17 +33,182 @@ class EnhancedCategorySuggestion:
     match_type: str  # 'merchant', 'keyword', 'pattern', 'context', 'amount'
     keywords_matched: List[str]
     confidence_factors: Dict[str, float]
+    merchant_name: Optional[str] = None  # Clean extracted merchant name
 
 
 class EnhancedCategorizationService:
     """Enhanced AI categorization with improved accuracy"""
-    
+
     def __init__(self):
         self.enhanced_merchant_patterns = self._load_enhanced_merchant_patterns()
+        self.merchant_name_map = self._load_merchant_name_map()
         self.context_patterns = self._load_context_patterns()
         self.amount_based_categories = self._load_amount_categories()
         self.category_keywords = self._load_enhanced_category_keywords()
         self.confidence_weights = self._load_confidence_weights()
+
+    def _load_merchant_name_map(self) -> Dict[str, str]:
+        """Map regex patterns to clean merchant display names"""
+        return {
+            # Food & Dining
+            r'MCDONALD.*': "McDonald's",
+            r'STARBUCKS.*': 'Starbucks',
+            r'SUBWAY.*': 'Subway',
+            r'BURGER\s*KING.*': 'Burger King',
+            r'TACO\s*BELL.*': 'Taco Bell',
+            r'CHIPOTLE.*': 'Chipotle',
+            r'DOMINO.*': "Domino's",
+            r'PIZZA\s*HUT.*': 'Pizza Hut',
+            r'KFC.*': 'KFC',
+            r'WENDY.*': "Wendy's",
+            r'CHICK[- ]?FIL[- ]?A.*': 'Chick-fil-A',
+            r'BOJANGLES.*': "Bojangles'",
+            r'OUTBACK.*': 'Outback Steakhouse',
+            r'RED\s*LOBSTER.*': 'Red Lobster',
+            r'PANERA.*': 'Panera Bread',
+            r'DUNKIN.*': "Dunkin'",
+            r'PANDA\s*EXPRESS.*': 'Panda Express',
+            r'BUFFALO\s*WILD\s*WINGS.*': 'Buffalo Wild Wings',
+            r'OLIVE\s*GARDEN.*': 'Olive Garden',
+            r'APPLEBEE.*': "Applebee's",
+            r'CRACKER\s*BARREL.*': 'Cracker Barrel',
+            r'IHOP.*': 'IHOP',
+            r'DENNY.*': "Denny's",
+            r'WAFFLE\s*HOUSE.*': 'Waffle House',
+            r'FIVE\s*GUYS.*': 'Five Guys',
+            r'POPEYES.*': 'Popeyes',
+            r'SONIC\s*DRIVE.*': 'Sonic Drive-In',
+            r'JACK\s*IN\s*THE\s*BOX.*': 'Jack in the Box',
+            r'ARBY.*': "Arby's",
+            r'COOK\s*OUT.*': 'Cook Out',
+            r'RAISING\s*CANE.*': "Raising Cane's",
+            r'JERSEY\s*MIKE.*': "Jersey Mike's",
+            r'JIMMY\s*JOHN.*': "Jimmy John's",
+            r'FIREHOUSE\s*SUB.*': 'Firehouse Subs',
+            r'CHEESECAKE\s*FACTORY.*': 'Cheesecake Factory',
+            r'TEXAS\s*ROADHOUSE.*': 'Texas Roadhouse',
+            r'LITTLE\s*CAESAR.*': "Little Caesars",
+            r'QDOBA.*': 'Qdoba',
+            r'WHATABURGER.*': 'Whataburger',
+            r'IN[- ]?N[- ]?OUT.*': 'In-N-Out Burger',
+            r'ZAXBY.*': "Zaxby's",
+            r'SHAKE\s*SHACK.*': 'Shake Shack',
+            r'WINGSTOP.*': 'Wingstop',
+
+            # Grocery
+            r'AL[- ]?BASHA.*MARK.*': 'Al-Basha Market',
+            r'HARRIS\s+TE.*': 'Harris Teeter',
+            r'WHOLE\s*FOODS.*': 'Whole Foods',
+            r'KROGER.*': 'Kroger',
+            r'PUBLIX.*': 'Publix',
+            r'ALDI.*': 'Aldi',
+            r'SAFEWAY.*': 'Safeway',
+            r'TRADER\s*JOE.*': "Trader Joe's",
+            r'FOOD\s*LION.*': 'Food Lion',
+            r'ALBERTSONS.*': "Albertsons",
+            r'WEGMANS.*': 'Wegmans',
+            r'COSTCO.*': 'Costco',
+            r'SAM.*CLUB.*': "Sam's Club",
+            r'BJ.*WHOLESALE.*': "BJ's Wholesale",
+            r'ALMADINA.*': 'Almadina Supermarket',
+
+            # Gas & Automotive
+            r'SHEETZ.*': 'Sheetz',
+            r'SHELL.*': 'Shell',
+            r'EXXON.*': 'Exxon',
+            r'CHEVRON.*': 'Chevron',
+            r'BP\s.*': 'BP',
+            r'MOBIL.*': 'Mobil',
+            r'WAWA.*': 'Wawa',
+            r'SPEEDWAY.*': 'Speedway',
+            r'QUIKTRIP.*': 'QuikTrip',
+            r'RACETRAC.*': 'RaceTrac',
+            r'AUTOZONE.*': 'AutoZone',
+            r'O\'?REILLY.*AUTO.*': "O'Reilly Auto Parts",
+            r'ADVANCE\s*AUTO.*': 'Advance Auto Parts',
+            r'JIFFY\s*LUBE.*': 'Jiffy Lube',
+
+            # Shopping
+            r'AMAZON.*': 'Amazon',
+            r'WALMART.*': 'Walmart',
+            r'TARGET.*': 'Target',
+            r'HOME\s*DEPOT.*': 'Home Depot',
+            r'LOWES.*': "Lowe's",
+            r'BEST\s*BUY.*': 'Best Buy',
+            r'DOLLAR\s*(GENERAL|TREE).*': 'Dollar Store',
+            r'TJ\s*MAXX.*': 'TJ Maxx',
+            r'MARSHALLS.*': 'Marshalls',
+            r'ROSS.*': 'Ross',
+            r'IKEA.*': 'IKEA',
+            r'WAYFAIR.*': 'Wayfair',
+            r'EBAY.*': 'eBay',
+            r'ETSY.*': 'Etsy',
+
+            # Entertainment
+            r'NETFLIX.*': 'Netflix',
+            r'SPOTIFY.*': 'Spotify',
+            r'HULU.*': 'Hulu',
+            r'DISNEY\s*\+.*': 'Disney+',
+            r'HBO\s*MAX.*': 'HBO Max',
+            r'YOUTUBE\s*(PREMIUM|TV|MUSIC).*': 'YouTube',
+            r'STEAM\s*GAMES.*': 'Steam',
+            r'PLAYSTATION.*': 'PlayStation',
+            r'XBOX.*': 'Xbox',
+            r'NINTENDO.*': 'Nintendo',
+            r'RACELAB.*': 'Racelab',
+            r'APEX\s*RACING.*': 'Apex Racing',
+            r'IRACING.*': 'iRacing',
+            r'TWITCH.*': 'Twitch',
+            r'AUDIBLE.*': 'Audible',
+
+            # Software
+            r'OPENAI.*': 'OpenAI',
+            r'CLAUDE\.AI.*': 'Claude AI',
+            r'MICROSOFT.*': 'Microsoft',
+            r'GOOGLE.*PLAY.*': 'Google Play',
+            r'APPLE\s*(?!TV).*': 'Apple',
+            r'ADOBE.*': 'Adobe',
+            r'DROPBOX.*': 'Dropbox',
+            r'ZOOM\s*VIDEO.*': 'Zoom',
+            r'SLACK.*': 'Slack',
+            r'CANVA.*': 'Canva',
+            r'SHOPIFY.*': 'Shopify',
+            r'GODADDY.*': 'GoDaddy',
+            r'NOTION.*': 'Notion',
+
+            # Bills & Utilities
+            r'DUKE\s*ENERGY.*': 'Duke Energy',
+            r'DOMINION\s*ENERGY.*': 'Dominion Energy',
+            r'GOOGLE\s*FIBER.*': 'Google Fiber',
+            r'SPECTRUM.*': 'Spectrum',
+            r'VERIZON.*': 'Verizon',
+            r'AT&T.*': 'AT&T',
+            r'XFINITY.*': 'Xfinity',
+            r'COMCAST.*': 'Comcast',
+            r'T-MOBILE.*': 'T-Mobile',
+            r'TMOBILE.*': 'T-Mobile',
+
+            # Transportation
+            r'UBER.*': 'Uber',
+            r'LYFT.*': 'Lyft',
+
+            # Healthcare
+            r'CVS.*': 'CVS',
+            r'WALGREENS.*': 'Walgreens',
+            r'RITE\s*AID.*': 'Rite Aid',
+
+            # Home Services
+            r'SOLVE\s*PEST.*': 'Solve Pest Pros',
+            r'TERMINIX.*': 'Terminix',
+            r'ORKIN.*': 'Orkin',
+
+            # Financial
+            r'GEICO.*': 'GEICO',
+            r'STATE\s*FARM.*': 'State Farm',
+            r'AVANT.*': 'Avant',
+            r'AFFIRM.*': 'Affirm',
+            r'KLARNA.*': 'Klarna',
+        }
     
     def _load_enhanced_merchant_patterns(self) -> Dict[str, Tuple[str, float]]:
         """Enhanced merchant patterns with confidence scores"""
@@ -798,20 +963,103 @@ class EnhancedCategorizationService:
     def _match_merchant_patterns(self, desc_upper: str, desc_lower: str) -> List[EnhancedCategorySuggestion]:
         """Match against enhanced merchant patterns"""
         suggestions = []
-        
+
         for pattern, (category, base_confidence) in self.enhanced_merchant_patterns.items():
             if re.search(pattern, desc_upper, re.IGNORECASE):
+                # Get clean merchant name from mapping, or derive from pattern
+                merchant_name = self.merchant_name_map.get(pattern)
+                if not merchant_name:
+                    # Fallback: try to extract from pattern (e.g., "RACELAB.*" -> "Racelab")
+                    merchant_name = self._extract_merchant_from_pattern(pattern)
+
                 suggestions.append(EnhancedCategorySuggestion(
                     category_name=category,
                     confidence=base_confidence,
                     reasoning=f"Merchant pattern matched: {pattern}",
                     match_type='merchant_pattern',
                     keywords_matched=[pattern],
-                    confidence_factors={'merchant_pattern': base_confidence}
+                    confidence_factors={'merchant_pattern': base_confidence},
+                    merchant_name=merchant_name
                 ))
                 break  # Take first match for specificity
-        
+
         return suggestions
+
+    def _extract_merchant_from_pattern(self, pattern: str) -> Optional[str]:
+        """Extract a readable merchant name from a regex pattern"""
+        # Remove regex special chars and extract core word
+        # e.g., r'RACELAB.*' -> 'Racelab', r'BURGER\s*KING.*' -> 'Burger King'
+        cleaned = pattern.replace(r'\s*', ' ').replace(r'\s+', ' ')
+        cleaned = re.sub(r'[\.\*\+\?\[\]\(\)\{\}\|\^\\$]', '', cleaned)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        if cleaned:
+            # Title case it
+            return cleaned.title()
+        return None
+
+    def _extract_p2p_counterparty(self, description: str) -> Optional[str]:
+        """Extract counterparty name from P2P transaction descriptions.
+
+        Examples:
+        - "pmnt sent 1210 venmo *mai elm new york ny" -> "Mai Elm"
+        - "zelle payment from marwan s moftah conf#..." -> "Marwan S Moftah"
+        - "cash app *john doe" -> "John Doe"
+        - "paypal *jane smith" -> "Jane Smith"
+        """
+        desc_upper = description.upper()
+        desc_clean = description.strip()
+
+        # Venmo: "VENMO *NAME" or "PMNT SENT ... VENMO *NAME CITY STATE"
+        # Strategy: Find "VENMO *" then capture 1-3 words, stop before STATE code pattern
+        # Common pattern: "VENMO *FIRST LAST CITY ST" where ST is 2-letter state code
+        # Look for pattern ending with " XX" where XX is a 2-letter state code
+        venmo_match = re.search(r'VENMO\s*\*\s*([A-Z][A-Z]+(?:\s+[A-Z]+)?)\s+[A-Z]+\s+[A-Z]{2}\b', desc_upper)
+        if venmo_match:
+            name = venmo_match.group(1).strip()
+            name = re.sub(r'\s+', ' ', name).strip()
+            if len(name) >= 2:
+                return name.title()
+        # Fallback: capture 1-2 words after VENMO *
+        venmo_match2 = re.search(r'VENMO\s*\*\s*([A-Z][A-Z]+(?:\s+[A-Z]+)?)', desc_upper)
+        if venmo_match2:
+            name = venmo_match2.group(1).strip()
+            name = re.sub(r'\s+', ' ', name).strip()
+            # Avoid capturing city names (usually 4+ letters, common patterns)
+            words = name.split()
+            if len(words) >= 2:
+                # Take first two words as first/last name
+                name = ' '.join(words[:2])
+            if len(name) >= 2:
+                return name.title()
+
+        # Zelle: "ZELLE PAYMENT FROM/TO NAME CONF#..."
+        zelle_match = re.search(r'ZELLE\s+(?:PAYMENT\s+)?(?:FROM|TO)\s+([A-Z][A-Z\s]+?)(?:\s+CONF|$)', desc_upper)
+        if zelle_match:
+            name = zelle_match.group(1).strip()
+            name = re.sub(r'\s+', ' ', name).strip()
+            if len(name) >= 2:
+                return name.title()
+
+        # Cash App: "CASH APP *NAME" or "CASHAPP *NAME"
+        cashapp_match = re.search(r'CASH\s*APP\s*\*\s*([A-Z][A-Z\s]+?)(?:\s+\d|$)', desc_upper)
+        if cashapp_match:
+            name = cashapp_match.group(1).strip()
+            name = re.sub(r'\s+', ' ', name).strip()
+            if len(name) >= 2:
+                return name.title()
+
+        # PayPal person-to-person: "PAYPAL *NAME" (not PAYPAL *MERCHANT)
+        paypal_match = re.search(r'PAYPAL\s*\*\s*([A-Z][A-Z\s]+?)(?:\s+\d|$)', desc_upper)
+        if paypal_match:
+            name = paypal_match.group(1).strip()
+            # Skip if it looks like a merchant (all caps common words)
+            merchant_indicators = ['LLC', 'INC', 'CORP', 'STORE', 'SHOP', 'GAMES', 'RACING']
+            if not any(ind in name for ind in merchant_indicators):
+                name = re.sub(r'\s+', ' ', name).strip()
+                if len(name) >= 2:
+                    return name.title()
+
+        return None
     
     def _match_context_patterns(self, desc_upper: str, desc_lower: str, amount: float = 0) -> List[EnhancedCategorySuggestion]:
         """Match against context-aware patterns with priority ordering.
@@ -859,13 +1107,43 @@ class EnhancedCategorizationService:
                 conf = base_confidence
                 if amount < 0 and 'PMNT SENT' in desc_upper:
                     conf = min(0.99, conf + 0.05)  # Boost for confirmed outgoing
+
+                # Extract P2P counterparty name for display
+                # Use original description (not upper) for better name extraction
+                original_desc = desc_lower  # This preserves case better
+                counterparty = self._extract_p2p_counterparty(desc_upper)
+                merchant_name = None
+                if counterparty:
+                    # Format as "Venmo - John Doe" or "Zelle - Jane Smith"
+                    if 'VENMO' in desc_upper:
+                        merchant_name = f"Venmo → {counterparty}"
+                    elif 'ZELLE' in desc_upper:
+                        merchant_name = f"Zelle → {counterparty}"
+                    elif 'CASH APP' in desc_upper or 'CASHAPP' in desc_upper:
+                        merchant_name = f"Cash App → {counterparty}"
+                    elif 'PAYPAL' in desc_upper:
+                        merchant_name = f"PayPal → {counterparty}"
+                    else:
+                        merchant_name = counterparty
+                else:
+                    # Fallback to service name
+                    if 'VENMO' in desc_upper:
+                        merchant_name = 'Venmo'
+                    elif 'ZELLE' in desc_upper:
+                        merchant_name = 'Zelle'
+                    elif 'CASH APP' in desc_upper or 'CASHAPP' in desc_upper:
+                        merchant_name = 'Cash App'
+                    elif 'WESTERN UNION' in desc_upper:
+                        merchant_name = 'Western Union'
+
                 suggestions.append(EnhancedCategorySuggestion(
                     category_name=category,
                     confidence=conf,
                     reasoning=f"Transfer pattern matched: {pattern[:40]}...",
                     match_type='context_pattern_transfer',
                     keywords_matched=[pattern],
-                    confidence_factors={'context_pattern': conf}
+                    confidence_factors={'context_pattern': conf},
+                    merchant_name=merchant_name
                 ))
 
         # STEP 3: Check other patterns (banking, financial services, etc.)
@@ -1043,7 +1321,8 @@ class EnhancedCategorizationService:
                 category_id=None,
                 category_name=s.category_name,
                 confidence=s.confidence,
-                reasoning=s.reasoning
+                reasoning=s.reasoning,
+                merchant_name=s.merchant_name
             )
             for s in enhanced_suggestions
         ]

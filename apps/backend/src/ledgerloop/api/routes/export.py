@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from ...db import get_conn
-from datetime import datetime
+from datetime import datetime, UTC
 import json
 
 
@@ -41,7 +41,7 @@ def export_transactions(
                tc.category_id, c.name AS category_name,
                CASE WHEN mt.left_tx_id IS NOT NULL OR mt.right_tx_id IS NOT NULL THEN true ELSE false END AS is_transfer,
                rtx.series_id AS recurring_series_id, t.zelle_direction, t.zelle_counterparty
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
@@ -99,7 +99,7 @@ def export_csv(
                CASE WHEN mt.left_tx_id IS NOT NULL OR mt.right_tx_id IS NOT NULL THEN true ELSE false END AS is_transfer,
                t.is_business, t.is_income, t.is_adjustment,
                rtx.series_id AS recurring_series_id, t.zelle_direction, t.zelle_counterparty
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
@@ -123,12 +123,12 @@ def export_csv(
         conn.execute(
             "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                f"evt_{int(datetime.utcnow().timestamp()*1000)}",
+                f"evt_{int(datetime.now(UTC).timestamp()*1000)}",
                 "export",
                 "csv",
                 "export:csv",
                 json.dumps(payload),
-                datetime.utcnow(),
+                datetime.now(UTC),
                 "system",
             ],
         )
@@ -179,7 +179,7 @@ def export_presets(
         f"""
         SELECT t.id, t.account_id, t.posted_at, t.amount, t.currency, t.description_norm,
                tc.category_id, c.name AS category_name
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL

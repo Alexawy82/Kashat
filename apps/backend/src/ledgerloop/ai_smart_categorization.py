@@ -261,7 +261,7 @@ class SmartCategorizationEngine:
         
         transactions = conn.execute(f"""
             SELECT ai_category_suggestions 
-            FROM transaction 
+            FROM [transaction] 
             WHERE ai_category_suggestions IS NOT NULL 
             LIMIT {limit}
         """).fetchall()
@@ -822,7 +822,7 @@ class SmartCategorizationEngine:
         
         # Get transaction details
         tx = conn.execute(
-            "SELECT description_norm, amount FROM transaction WHERE id = ?",
+            "SELECT description_norm, amount FROM [transaction] WHERE id = ?",
             [transaction_id]
         ).fetchone()
         
@@ -1138,7 +1138,7 @@ class SmartCategorizationEngine:
         # Get uncategorized transactions
         uncategorized = conn.execute("""
             SELECT t.id, t.description_norm, t.amount
-            FROM transaction t
+            FROM [transaction] t
             LEFT JOIN transaction_category tc ON tc.tx_id = t.id
             WHERE t.account_id = ? AND tc.tx_id IS NULL
             ORDER BY t.posted_at DESC
@@ -1201,7 +1201,7 @@ class SmartCategorizationEngine:
         if account_id:
             query += """
                 AND transaction_id IN (
-                    SELECT id FROM transaction WHERE account_id = ?
+                    SELECT id FROM [transaction] WHERE account_id = ?
                 )
             """
             params.append(account_id)
@@ -1300,7 +1300,7 @@ class SmartCategorizationEngine:
         
         # Frequency in account
         frequency = conn.execute("""
-            SELECT COUNT(*) FROM transaction 
+            SELECT COUNT(*) FROM [transaction] 
             WHERE account_id = ? AND description_norm LIKE ?
         """, [account_id, f"%{description[:20]}%"]).fetchone()[0]
         
@@ -1415,7 +1415,7 @@ class SmartCategorizationEngine:
         # Exact description match
         exact_matches = conn.execute("""
             SELECT c.id, c.name, COUNT(*) as frequency
-            FROM transaction t
+            FROM [transaction] t
             JOIN transaction_category tc ON tc.tx_id = t.id
             JOIN category c ON c.id = tc.category_id
             WHERE t.account_id = ? AND t.description_norm = ?
@@ -1440,7 +1440,7 @@ class SmartCategorizationEngine:
         if not exact_matches:
             fuzzy_matches = conn.execute("""
                 SELECT c.id, c.name, t.description_norm, AVG(ABS(t.amount - ?)) as avg_amount_diff, COUNT(*) as frequency
-                FROM transaction t
+                FROM [transaction] t
                 JOIN transaction_category tc ON tc.tx_id = t.id
                 JOIN category c ON c.id = tc.category_id
                 WHERE t.account_id = ? 
@@ -1483,7 +1483,7 @@ class SmartCategorizationEngine:
             SELECT c.id, c.name, GROUP_CONCAT(DISTINCT t.description_norm) as descriptions
             FROM category c
             JOIN transaction_category tc ON tc.category_id = c.id
-            JOIN transaction t ON t.id = tc.tx_id
+            JOIN [transaction] t ON t.id = tc.tx_id
             WHERE t.account_id = ?
             GROUP BY c.id, c.name
             HAVING COUNT(*) >= 2
@@ -1538,7 +1538,7 @@ class SmartCategorizationEngine:
         for merchant_type in features.merchant_indicators:
             merchant_categories = conn.execute("""
                 SELECT c.id, c.name, COUNT(*) as frequency
-                FROM transaction t
+                FROM [transaction] t
                 JOIN transaction_category tc ON tc.tx_id = t.id
                 JOIN category c ON c.id = tc.category_id
                 WHERE t.account_id = ? AND LOWER(t.description_norm) LIKE ?
@@ -1562,7 +1562,7 @@ class SmartCategorizationEngine:
         # Amount bucket patterns
         amount_bucket_categories = conn.execute("""
             SELECT c.id, c.name, COUNT(*) as frequency
-            FROM transaction t
+            FROM [transaction] t
             JOIN transaction_category tc ON tc.tx_id = t.id
             JOIN category c ON c.id = tc.category_id
             WHERE t.account_id = ? 
@@ -1881,7 +1881,7 @@ def build_training_dataset(min_occurrences: int = 2) -> List[Dict]:
             c.id AS category_id,
             tc.applied_by,
             COUNT(*) OVER (PARTITION BY c.id) AS category_count
-        FROM transaction t
+        FROM [transaction] t
         JOIN transaction_category tc ON tc.tx_id = t.id
         JOIN category c ON tc.category_id = c.id
         WHERE tc.applied_by NOT LIKE 'ai_%'  -- Exclude AI-applied to avoid circular learning
@@ -1920,7 +1920,7 @@ def build_merchant_category_map(min_occurrences: int = 2, min_confidence: float 
             c.id AS category_id,
             c.name AS category_name,
             tc.applied_by
-        FROM transaction t
+        FROM [transaction] t
         JOIN transaction_category tc ON tc.tx_id = t.id
         JOIN category c ON tc.category_id = c.id
         WHERE (tc.applied_by NOT LIKE 'ai_%' OR tc.applied_by IS NULL)
@@ -2054,7 +2054,7 @@ def categorize_with_training_data(
     # Get uncategorized transactions
     uncategorized = conn.execute("""
         SELECT t.id, t.description_norm, t.amount, t.account_id
-        FROM transaction t
+        FROM [transaction] t
         LEFT JOIN transaction_category tc ON tc.tx_id = t.id
         WHERE tc.tx_id IS NULL
         ORDER BY t.posted_at DESC
@@ -2124,7 +2124,7 @@ def categorize_with_training_data(
             similar = conn.execute("""
                 SELECT c.id, c.name, t.description_norm,
                        COUNT(*) as frequency
-                FROM transaction t
+                FROM [transaction] t
                 JOIN transaction_category tc ON tc.tx_id = t.id
                 JOIN category c ON tc.category_id = c.id
                 WHERE t.description_norm LIKE ?

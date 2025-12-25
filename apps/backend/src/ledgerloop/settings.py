@@ -54,7 +54,7 @@ DEFAULTS = {
     "dedup_min_confidence": 0.7,
     # Runtime controls
     "realtime_enabled": False,
-    "duckdb_threads": 0,
+    "sqlite_wal_mode": True,  # Use WAL mode for better concurrency
 }
 
 
