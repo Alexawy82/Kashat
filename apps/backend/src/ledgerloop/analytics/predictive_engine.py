@@ -105,7 +105,7 @@ class PredictiveAnalyticsEngine:
             LEFT JOIN category c ON tc.category_id = c.id
             WHERE t.account_id = ? 
                 AND t.amount < 0  -- Only expenses
-                AND t.posted_at >= current_date - INTERVAL 12 MONTH
+                AND t.posted_at >= date('now', '-12 months')
                 AND NOT EXISTS (
                     SELECT 1 FROM match_transfer mt 
                     WHERE (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) 
@@ -271,7 +271,7 @@ class PredictiveAnalyticsEngine:
                    volatility, confidence_score, pattern_type, updated_at
             FROM spending_patterns 
             WHERE account_id = ? 
-                AND updated_at > current_timestamp - INTERVAL 1 DAY
+                AND updated_at > datetime('now', '-1 day')
         """
         
         try:
@@ -397,7 +397,7 @@ class PredictiveAnalyticsEngine:
             WHERE account_id = ? 
                 AND amount > 0 
                 AND (is_income = TRUE OR amount > 1000)
-                AND posted_at >= current_date - INTERVAL 12 MONTH
+                AND posted_at >= date('now', '-12 months')
                 AND NOT EXISTS (
                     SELECT 1 FROM match_transfer mt 
                     WHERE (id = mt.left_tx_id OR id = mt.right_tx_id) 
@@ -564,7 +564,7 @@ class PredictiveAnalyticsEngine:
             LEFT JOIN category c ON tc.category_id = c.id
             WHERE t.account_id = ?
                 AND t.amount < 0
-                AND t.posted_at >= current_date - INTERVAL 7 DAY
+                AND t.posted_at >= date('now', '-7 days')
                 AND ABS(t.amount) > (
                     SELECT COALESCE(AVG(ABS(amount)) * 2.5, 50)
                     FROM [transaction] 
@@ -667,7 +667,7 @@ class PredictiveAnalyticsEngine:
             LEFT JOIN category c ON tc.category_id = c.id
             WHERE t.account_id = ?
                 AND t.amount < 0
-                AND t.posted_at >= current_date - INTERVAL 3 MONTH
+                AND t.posted_at >= date('now', '-3 months')
                 AND c.name IN ('Dining', 'Entertainment', 'Shopping', 'Subscriptions')
             GROUP BY merchant, category_name
             HAVING total_spent > 100 AND frequency >= 3

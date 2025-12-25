@@ -204,7 +204,7 @@ class AIInsightsEngine:
         
         spending_data = conn.execute(f"""
             SELECT 
-                date_trunc('month', t.posted_at) as month,
+                strftime('%Y-%m-01', t.posted_at) as month,
                 c.name as category,
                 SUM(-t.amount) as amount,
                 COUNT(*) as transaction_count
@@ -212,7 +212,7 @@ class AIInsightsEngine:
             LEFT JOIN transaction_category tc ON t.id = tc.tx_id
             LEFT JOIN category c ON tc.category_id = c.id
             WHERE {where_clause}
-            GROUP BY date_trunc('month', t.posted_at), c.name
+            GROUP BY strftime('%Y-%m-01', t.posted_at), c.name
             ORDER BY month
         """, params).fetchall()
         

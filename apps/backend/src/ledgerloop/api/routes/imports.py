@@ -197,7 +197,7 @@ def list_import_periods():
     rows = conn.execute(
         """
         SELECT
-            date_trunc('month', t.posted_at) AS period,
+            strftime('%Y-%m-01', t.posted_at) AS period,
             COUNT(DISTINCT t.id) AS tx_count,
             COUNT(DISTINCT ti.run_id) AS run_count,
             MIN(t.posted_at) AS first_tx,
@@ -242,7 +242,7 @@ def run_monthly_summary(run_id: str):
     conn = get_conn()
     rows = conn.execute(
         """
-        SELECT date_trunc('month', t.posted_at) AS month,
+        SELECT strftime('%Y-%m-01', t.posted_at) AS month,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net,

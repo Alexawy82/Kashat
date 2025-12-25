@@ -324,7 +324,8 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, co
     if not _column_exists(conn, table, column):
         default_clause = f" DEFAULT {default}" if default is not None else ""
         try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}{default_clause}")
+            # Use bracket notation for reserved keyword tables like 'transaction'
+            conn.execute(f"ALTER TABLE [{table}] ADD COLUMN {column} {coltype}{default_clause}")
         except Exception:
             pass
 

@@ -55,7 +55,7 @@ def monthly_summary(
     wh = " WHERE " + " AND ".join(where)
     rows = conn.execute(
         f"""
-        SELECT date_trunc('month', t.posted_at) AS month,
+        SELECT strftime('%Y-%m-01', t.posted_at) AS month,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net
@@ -95,7 +95,7 @@ def category_monthly(
     wh = " WHERE " + " AND ".join(where)
     rows = conn.execute(
         f"""
-        SELECT date_trunc('month', t.posted_at) AS month,
+        SELECT strftime('%Y-%m-01', t.posted_at) AS month,
                c.id as category_id,
                c.name as category_name,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend
@@ -245,7 +245,7 @@ def summary(
     # byMonth
     rows_month = conn.execute(
         f"""
-        SELECT date_trunc('month', t.posted_at) AS month,
+        SELECT strftime('%Y-%m-01', t.posted_at) AS month,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net
@@ -417,7 +417,7 @@ def predictions(
     # Compute monthly averages for top categories to gauge budget risk
     rows_month = conn.execute(
         f"""
-        SELECT date_trunc('month', t.posted_at) AS month,
+        SELECT strftime('%Y-%m-01', t.posted_at) AS month,
                COALESCE(c.name,'Uncategorized') AS category,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend
         FROM [transaction] t
@@ -980,7 +980,7 @@ async def dashboard(
         _params.append(account_id)
     rows = conn.execute(
         """
-        SELECT date_trunc('month', t.posted_at) AS month,
+        SELECT strftime('%Y-%m-01', t.posted_at) AS month,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
                SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS income,
                SUM(t.amount) AS net

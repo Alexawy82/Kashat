@@ -347,7 +347,7 @@ async def ai_suggest_transfers(
         LEFT JOIN match_transfer mt
           ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id)
         WHERE mt.left_tx_id IS NULL
-        AND t.posted_at >= CURRENT_DATE - INTERVAL '90 days'
+        AND t.posted_at >= date('now', '-90 days')
         ORDER BY t.posted_at DESC
         LIMIT 1000
         """

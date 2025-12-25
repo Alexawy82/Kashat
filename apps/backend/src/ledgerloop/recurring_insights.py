@@ -149,12 +149,12 @@ class RecurringInsightsEngine:
         # Get historical income (last 6 months average)
         income_data = self.conn.execute("""
             SELECT AVG(monthly_income) as avg_income FROM (
-                SELECT date_trunc('month', posted_at) as month, SUM(amount) as monthly_income
+                SELECT strftime('%Y-%m-01', posted_at) as month, SUM(amount) as monthly_income
                 FROM [transaction]
                 WHERE amount > 0
-                  AND posted_at >= CURRENT_DATE - INTERVAL '6 months'
+                  AND posted_at >= date('now', '-6 months')
                   AND is_income = TRUE
-                GROUP BY date_trunc('month', posted_at)
+                GROUP BY strftime('%Y-%m-01', posted_at)
             )
         """).fetchone()
         avg_monthly_income = float(income_data[0] or 0) if income_data else 0
@@ -162,13 +162,13 @@ class RecurringInsightsEngine:
         # Get historical discretionary spending (last 6 months average)
         discretionary_data = self.conn.execute("""
             SELECT AVG(monthly_disc) as avg_disc FROM (
-                SELECT date_trunc('month', posted_at) as month, SUM(-amount) as monthly_disc
+                SELECT strftime('%Y-%m-01', posted_at) as month, SUM(-amount) as monthly_disc
                 FROM [transaction] t
                 LEFT JOIN recurring_tx rt ON rt.tx_id = t.id
                 WHERE amount < 0
-                  AND posted_at >= CURRENT_DATE - INTERVAL '6 months'
+                  AND posted_at >= date('now', '-6 months')
                   AND rt.tx_id IS NULL
-                GROUP BY date_trunc('month', posted_at)
+                GROUP BY strftime('%Y-%m-01', posted_at)
             )
         """).fetchone()
         avg_discretionary = float(discretionary_data[0] or 0) if discretionary_data else 0
@@ -328,11 +328,11 @@ class RecurringInsightsEngine:
         # Get total monthly income for context
         income_result = self.conn.execute("""
             SELECT AVG(monthly) FROM (
-                SELECT date_trunc('month', posted_at) as m, SUM(amount) as monthly
+                SELECT strftime('%Y-%m-01', posted_at) as m, SUM(amount) as monthly
                 FROM [transaction]
                 WHERE amount > 0 AND is_income = TRUE
-                  AND posted_at >= CURRENT_DATE - INTERVAL '3 months'
-                GROUP BY date_trunc('month', posted_at)
+                  AND posted_at >= date('now', '-3 months')
+                GROUP BY strftime('%Y-%m-01', posted_at)
             )
         """).fetchone()
         monthly_income = float(income_result[0] or 5000) if income_result else 5000

@@ -340,13 +340,13 @@ class AIForecastingEngine:
         
         transactions = conn.execute(f"""
             SELECT 
-                date_trunc('month', t.posted_at) as month,
+                strftime('%Y-%m-01', t.posted_at) as month,
                 SUM(-t.amount) as amount,
                 COUNT(*) as transaction_count
             FROM [transaction] t
             {join_clause}
             WHERE {where_clause}
-            GROUP BY date_trunc('month', t.posted_at)
+            GROUP BY strftime('%Y-%m-01', t.posted_at)
             ORDER BY month
         """, params).fetchall()
         
@@ -380,12 +380,12 @@ class AIForecastingEngine:
         
         income_data = conn.execute(f"""
             SELECT 
-                date_trunc('month', t.posted_at) as month,
+                strftime('%Y-%m-01', t.posted_at) as month,
                 SUM(t.amount) as amount,
                 COUNT(*) as transaction_count
             FROM [transaction] t
             WHERE {where_clause}
-            GROUP BY date_trunc('month', t.posted_at)
+            GROUP BY strftime('%Y-%m-01', t.posted_at)
             ORDER BY month
         """, params).fetchall()
         

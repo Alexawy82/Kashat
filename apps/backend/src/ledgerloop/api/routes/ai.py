@@ -322,7 +322,7 @@ async def get_ai_stats() -> dict:
             COUNT(*) as processed_today,
             AVG(ai_confidence_score) as avg_confidence
         FROM [transaction] 
-        WHERE ai_processed_at >= current_date - INTERVAL 1 DAY
+        WHERE ai_processed_at >= date('now', '-1 day')
         AND ai_confidence_score IS NOT NULL
     """).fetchone()
     
@@ -992,7 +992,7 @@ async def get_queue_stats() -> dict:
             COUNT(*) FILTER (WHERE status = 'paused') as paused,
             COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled
         FROM ai_bulk_job
-        WHERE created_at > (CURRENT_TIMESTAMP - INTERVAL '24 hours')
+        WHERE created_at > (datetime('now', '-24 hours'))
     """).fetchone()
 
     settings = load_settings()
