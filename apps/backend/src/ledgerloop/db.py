@@ -205,7 +205,8 @@ def _now_iso() -> str:
 
 def _new_connection(dbfile: str) -> sqlite3.Connection:
     """Create a new SQLite connection with proper settings."""
-    conn = sqlite3.connect(dbfile, check_same_thread=False)
+    # Use isolation_level=None for autocommit mode (matches DuckDB behavior)
+    conn = sqlite3.connect(dbfile, check_same_thread=False, isolation_level=None)
     # Register custom functions
     conn.create_function("regexp", 2, _sqlite_regexp)
     conn.create_function("regexp_matches", 2, _sqlite_regexp)  # DuckDB compatibility alias
