@@ -46,15 +46,18 @@ def _should_use_ai_fallback() -> bool:
 
 
 def _is_ai_available() -> bool:
-    """Check if AI service is available (LMStudio running or API configured)."""
+    """Check if AI service is available (OpenAI API key or LMStudio running)."""
     try:
         from .ai import AIConfig
-        import requests
-
         config = AIConfig.from_env()
 
-        # Check LMStudio
+        # OpenAI is preferred (native PDF support, no image conversion)
+        if config.openai_api_key:
+            return True
+
+        # Check LMStudio as fallback
         try:
+            import requests
             resp = requests.get(
                 f"{config.lmstudio_base_url}/models",
                 timeout=2
@@ -63,10 +66,6 @@ def _is_ai_available() -> bool:
                 return True
         except Exception:
             pass
-
-        # Check OpenAI
-        if config.openai_api_key:
-            return True
 
         return False
     except Exception:
