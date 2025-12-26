@@ -124,7 +124,8 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
                 except Exception:
                     pass
             except Exception as e:
-                if e.__class__.__name__ != 'ConstraintException':
+                # Handle both DuckDB (ConstraintException) and SQLite (IntegrityError)
+                if e.__class__.__name__ not in ('ConstraintException', 'IntegrityError'):
                     raise
                 deduped += 1
                 continue

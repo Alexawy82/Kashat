@@ -80,7 +80,8 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
                 )
                 inserted += 1
             except Exception as e:
-                if e.__class__.__name__ != 'ConstraintException':
+                # Handle both DuckDB (ConstraintException) and SQLite (IntegrityError)
+                if e.__class__.__name__ not in ('ConstraintException', 'IntegrityError'):
                     raise
                 deduped += 1
             else:
@@ -93,7 +94,7 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
                     pass
         return {"run_id": run_id, "file_id": file_id, "inserted": inserted, "deduped": deduped, "raw": raw_count, "parser": "boa_v2025", "hash": digest}
     except Exception:
-        pass
+        pass  # Fall through to fallback parser
 
     # Fallback: SimpleBankV1 text lines
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
@@ -123,7 +124,8 @@ def import_pdf_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
             )
             inserted += 1
         except Exception as e:
-            if e.__class__.__name__ != 'ConstraintException':
+            # Handle both DuckDB (ConstraintException) and SQLite (IntegrityError)
+            if e.__class__.__name__ not in ('ConstraintException', 'IntegrityError'):
                 raise
             deduped += 1
         else:
