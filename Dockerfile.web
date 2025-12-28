@@ -1,0 +1,61 @@
+# LedgerLoop Web Frontend - Production Dockerfile
+# Multi-stage build for optimal production image
+
+# Stage 1: Builder (install ALL deps including devDeps for build)
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Install dependencies needed for node-gyp
+RUN apk add --no-cache libc6-compat
+
+# Copy package files and install ALL dependencies (including devDeps for tailwind/postcss)
+COPY apps/web/package*.json ./
+RUN npm ci
+
+# Copy source files
+COPY apps/web/tsconfig.json ./
+COPY apps/web/next.config.js ./
+COPY apps/web/postcss.config.js ./
+COPY apps/web/tailwind.config.js ./
+COPY apps/web/src ./src
+
+# Create empty public folder if it doesn't exist
+RUN mkdir -p public
+
+# Build arguments for environment
+ARG NEXT_PUBLIC_API_BASE=/api
+ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+ARG LEDGERLOOP_BACKEND_ORIGIN=http://localhost:8000
+ENV LEDGERLOOP_BACKEND_ORIGIN=$LEDGERLOOP_BACKEND_ORIGIN
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npm run build
+
+# Stage 3: Production runner
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+# Security: Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Copy only necessary files
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Health check (use 127.0.0.1 to avoid IPv6 issues)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://127.0.0.1:3000/ || exit 1
+
+USER nextjs
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

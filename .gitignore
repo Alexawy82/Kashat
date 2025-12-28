@@ -1,0 +1,17 @@
+__pycache__/
+.pytest_cache/
+.venv/
+env/
+*.pyc
+*.pyo
+*.DS_Store
+node_modules/
+.env
+data/
+dist/
+build/
+.next
+apps/web/.next
+apps/web/tmp/ll_next
+logs
+.sessions

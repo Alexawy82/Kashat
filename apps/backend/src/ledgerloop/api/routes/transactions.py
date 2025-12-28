@@ -307,7 +307,7 @@ def patch_transaction(tx_id: str, body: PatchTxBody):
     conn.execute(f"UPDATE [transaction] SET {', '.join(sets)} WHERE id = ?", params + [tx_id])
     conn.execute(
         "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [str(uuid.uuid4()), [transaction], tx_id, "patch", _json.dumps(body.dict(exclude_none=True)), _dt.now(_UTC), "user"],
+        [str(uuid.uuid4()), "transaction", tx_id, "patch", _json.dumps(body.dict(exclude_none=True)), _dt.now(_UTC), "user"],
     )
     return {"updated": 1}
 
@@ -342,7 +342,7 @@ async def assign_category(tx_id: str, body: AssignCategoryBody):
         "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             str(uuid.uuid4()),
-            [transaction],
+            "transaction",
             tx_id,
             "manual_category",
             _json.dumps({"category_id": body.category_id}),
@@ -371,7 +371,7 @@ def delete_transaction(tx_id: str):
     from datetime import datetime as _dt, UTC as _UTC
     conn.execute(
         "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [str(uuid.uuid4()), [transaction], tx_id, "delete", _json.dumps({}), _dt.now(_UTC), "user"],
+        [str(uuid.uuid4()), "transaction", tx_id, "delete", _json.dumps({}), _dt.now(_UTC), "user"],
     )
     return {"deleted": tx_id}
 
@@ -391,7 +391,7 @@ def get_ai_details(tx_id: str) -> dict:
         raise HTTPException(status_code=404, detail="transaction not found")
     cols = [c[0] for c in conn.description]
     data = dict(zip(cols, row))
-    return {[transaction]: data}
+    return {"transaction": data}
 class BatchBody(BaseModel):
     ids: list[str]
 

@@ -1,14 +1,14 @@
 import io
 import csv
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, UTC
 
 from fastapi.testclient import TestClient
 import os
 import tempfile
 
-from ledgerloop.api.main import app
-from ledgerloop.db import get_conn
+from kashat.api.main import app
+from kashat.db import get_conn
 
 
 class TestAnalyticsAndExportEndpoints(unittest.TestCase):
@@ -55,14 +55,14 @@ class TestAnalyticsAndExportEndpoints(unittest.TestCase):
         for rid, acc, d, amt, curr, desc in rows:
             conn.execute(
                 "INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, fingerprint, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                [rid, acc, d, amt, curr, desc, f"fp_{rid}", datetime.utcnow()],
+                [rid, acc, d, amt, curr, desc, f"fp_{rid}", datetime.now(UTC)],
             )
         # Categorize some
         conn.execute("INSERT INTO transaction_category (tx_id, category_id) VALUES ('t1','cat1'), ('t3','cat1')")
         # Mark t5 as transfer (decided)
         conn.execute(
             "INSERT INTO match_transfer (left_tx_id, right_tx_id, score, method, decided_at) VALUES ('t5','x', 0.9, 'heuristic', ?)",
-            [datetime.utcnow()],
+            [datetime.now(UTC)],
         )
 
     def test_analytics_summary_excludes_transfers_by_default(self):

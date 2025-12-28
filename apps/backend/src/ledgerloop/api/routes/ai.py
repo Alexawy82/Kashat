@@ -121,7 +121,7 @@ async def analyze_transaction(transaction_id: str) -> TransactionAnalysisRespons
                         "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [
                             str(_uuid.uuid4()),
-                            [transaction],
+                            "transaction",
                             tx_id,
                             "ai_auto_category",
                             _json.dumps({"category_id": mapped_id, "source": best.category_name, "confidence": best.confidence}),
@@ -746,7 +746,7 @@ async def apply_smart_category_suggestion(request: ApplyCategoryRequest) -> dict
         "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             str(uuid.uuid4()),
-            [transaction],
+            "transaction",
             request.transaction_id,
             "ai_category_applied",
             json.dumps({
@@ -1253,6 +1253,65 @@ async def ai_status() -> dict:
     }
 
 
+@router.get("/categorization/status")
+async def get_categorization_status() -> dict:
+    """Get real-time status of AI auto-categorization.
+
+    Returns:
+    - Overall categorization stats (total, categorized, uncategorized, percent)
+    - Current job status (if any job is running)
+    - Progress tracking for active jobs
+    """
+    conn = get_conn()
+
+    # Get overall transaction stats
+    total = conn.execute("SELECT COUNT(*) FROM [transaction]").fetchone()[0]
+    categorized = conn.execute("""
+        SELECT COUNT(DISTINCT tx_id) FROM transaction_category
+    """).fetchone()[0]
+    uncategorized = total - categorized
+
+    # Get the most recent categorization job
+    job = conn.execute("""
+        SELECT id, total_transactions, processed_transactions, enhanced_transactions,
+               status, created_at, completed_at, error_message
+        FROM ai_bulk_job
+        WHERE job_type = 'auto_categorize_all'
+        ORDER BY created_at DESC LIMIT 1
+    """).fetchone()
+
+    # Build response
+    response = {
+        "overall": {
+            "total_transactions": total,
+            "categorized": categorized,
+            "uncategorized": uncategorized,
+            "percent_complete": round(categorized / total * 100, 1) if total > 0 else 0
+        },
+        "current_job": None
+    }
+
+    if job:
+        job_total = job[1] or 0
+        job_processed = job[2] or 0
+        job_categorized = job[3] or 0
+        progress_pct = round(job_processed / job_total * 100, 1) if job_total > 0 else 0
+
+        response["current_job"] = {
+            "job_id": job[0],
+            "total": job_total,
+            "processed": job_processed,
+            "categorized": job_categorized,
+            "status": job[4],
+            "progress_percent": progress_pct,
+            "created_at": job[5],
+            "completed_at": job[6],
+            "error_message": job[7]
+        }
+
+    return response
+
+
 @router.post("/reset")
 async def ai_reset() -> dict:
     """Reset the AI service (reloads provider settings without process restart)."""
@@ -1405,7 +1464,7 @@ async def update_detection_markers(request: UpdateDetectionMarkersRequest) -> di
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, [
             str(uuid.uuid4()),
-            [transaction],
+            "transaction",
             request.transaction_id,
             "manual_detection_update",
             json.dumps(request.dict(exclude_none=True)),

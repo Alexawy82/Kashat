@@ -1,0 +1,446 @@
+{
+  "meta": {
+    "generated_at": "2025-12-27T21:36:36.198918",
+    "audit_type": "FRONTEND_COMPREHENSIVE_AUDIT",
+    "version": "1.0.0",
+    "auditor": "Claude Code CLI",
+    "data_tested": {
+      "transactions": 2118,
+      "accounts": 1,
+      "recurring_series": 61,
+      "counterparties": 9,
+      "import_runs": 12
+    }
+  },
+  "executive_summary": {
+    "overall_score": 6.1,
+    "ux_ui_score": 6.7,
+    "standards_2025_score": 5.4,
+    "api_health": "97%",
+    "critical_issues": 4,
+    "major_issues": 4,
+    "minor_issues": 4,
+    "verdict": "FUNCTIONAL with significant improvement opportunities"
+  },
+  "pages_audit": {
+    "total_pages": 8,
+    "pages": [
+      {
+        "name": "Dashboard",
+        "path": "/",
+        "status": "WORKING",
+        "apis_working": 5,
+        "apis_failed": 0,
+        "components": [
+          "SummaryCards",
+          "CashflowChart",
+          "IntelligenceFeed",
+          "RecurringWidget"
+        ],
+        "issues": []
+      },
+      {
+        "name": "Transactions",
+        "path": "/transactions",
+        "status": "WORKING",
+        "apis_working": 4,
+        "apis_failed": 0,
+        "components": [
+          "DataTable",
+          "TransactionRow",
+          "CategoryDropdown",
+          "Pagination"
+        ],
+        "issues": [
+          "No bulk actions",
+          "No column visibility toggle"
+        ]
+      },
+      {
+        "name": "Import",
+        "path": "/import",
+        "status": "WORKING",
+        "apis_working": 1,
+        "apis_failed": 0,
+        "components": [
+          "DropZone",
+          "FileList",
+          "ImportHistory",
+          "ProgressBar"
+        ],
+        "issues": []
+      },
+      {
+        "name": "Recurring",
+        "path": "/recurring",
+        "status": "PARTIAL",
+        "apis_working": 9,
+        "apis_failed": 1,
+        "components": [
+          "SummaryBar",
+          "TypeTabs",
+          "SeriesTable",
+          "InsightsPanel",
+          "UpcomingWidget"
+        ],
+        "issues": [
+          "candidates endpoint returns 404"
+        ]
+      },
+      {
+        "name": "Transfers",
+        "path": "/transfers",
+        "status": "PARTIAL",
+        "apis_working": 2,
+        "apis_failed": 1,
+        "components": [
+          "StatsCards",
+          "CounterpartyCard",
+          "CounterpartySheet",
+          "TransfersTab"
+        ],
+        "issues": [
+          "transfer suggestions endpoint returns 404"
+        ]
+      },
+      {
+        "name": "Analytics",
+        "path": "/analytics",
+        "status": "WORKING",
+        "apis_working": 9,
+        "apis_failed": 0,
+        "components": [
+          "SummaryCards",
+          "MerchantsCard",
+          "PatternCard",
+          "TrendsCard",
+          "ForecastCard"
+        ],
+        "issues": [
+          "No interactive charts despite rich data"
+        ]
+      },
+      {
+        "name": "Calendar",
+        "path": "/calendar",
+        "status": "WORKING",
+        "apis_working": 2,
+        "apis_failed": 0,
+        "components": [
+          "CalendarGrid",
+          "SummaryCards",
+          "UpcomingSidebar"
+        ],
+        "issues": []
+      },
+      {
+        "name": "Budget",
+        "path": "/budget",
+        "status": "WORKING",
+        "apis_working": 1,
+        "apis_failed": 0,
+        "components": [
+          "BudgetCard",
+          "CreateBudgetDialog",
+          "ProgressBar",
+          "CategoryBreakdown"
+        ],
+        "issues": []
+      }
+    ]
+  },
+  "component_analysis": {
+    "total_analyzed": 6,
+    "components": [
+      {
+        "name": "Navigation (Sidebar)",
+        "type": "Navigation",
+        "score": 7,
+        "features": [
+          "Fixed layout",
+          "9 nav items",
+          "Active states",
+          "Cmd+K search"
+        ],
+        "issues": [
+          "No mobile hamburger",
+          "Meta key not cross-platform"
+        ]
+      },
+      {
+        "name": "Data Tables",
+        "type": "Table",
+        "score": 7,
+        "features": [
+          "Sortable",
+          "Pagination",
+          "Loading skeletons",
+          "Empty states"
+        ],
+        "issues": [
+          "No column resize",
+          "No column visibility",
+          "No row selection"
+        ]
+      },
+      {
+        "name": "Cards (shadcn/ui)",
+        "type": "Container",
+        "score": 9,
+        "features": [
+          "Consistent styling",
+          "Header/content sections",
+          "Icon support"
+        ],
+        "issues": []
+      },
+      {
+        "name": "Forms",
+        "type": "Form Components",
+        "score": 8,
+        "features": [
+          "shadcn/ui styling",
+          "Validation",
+          "Loading states"
+        ],
+        "issues": [
+          "No form-level validation"
+        ]
+      },
+      {
+        "name": "Modals/Sheets",
+        "type": "Overlay",
+        "score": 9,
+        "features": [
+          "Focus trap",
+          "ESC close",
+          "Click outside close"
+        ],
+        "issues": []
+      },
+      {
+        "name": "Charts",
+        "type": "Visualization",
+        "score": 4,
+        "features": [
+          "Progress bars only"
+        ],
+        "issues": [
+          "No charting library",
+          "No interactive visualizations"
+        ]
+      }
+    ]
+  },
+  "ux_ui_scores": {
+    "visual_design": {
+      "score": 8,
+      "max": 10
+    },
+    "usability": {
+      "score": 7,
+      "max": 10
+    },
+    "responsiveness": {
+      "score": 5,
+      "max": 10
+    },
+    "performance": {
+      "score": 8,
+      "max": 10
+    },
+    "accessibility": {
+      "score": 5,
+      "max": 10
+    },
+    "error_handling": {
+      "score": 7,
+      "max": 10
+    }
+  },
+  "standards_2025": {
+    "ai_integration": {
+      "score": 7,
+      "max": 10,
+      "missing": [
+        "Natural language search",
+        "AI chat"
+      ]
+    },
+    "modern_react": {
+      "score": 6,
+      "max": 10,
+      "missing": [
+        "Server components",
+        "React 19 actions"
+      ]
+    },
+    "design_system": {
+      "score": 7,
+      "max": 10,
+      "missing": [
+        "Design tokens",
+        "Theme UI",
+        "Dark mode"
+      ]
+    },
+    "data_visualization": {
+      "score": 4,
+      "max": 10,
+      "missing": [
+        "Interactive charts",
+        "Drill-down",
+        "Export"
+      ]
+    },
+    "mobile_experience": {
+      "score": 3,
+      "max": 10,
+      "missing": [
+        "Mobile nav",
+        "PWA",
+        "Touch gestures"
+      ]
+    },
+    "state_management": {
+      "score": 5,
+      "max": 10,
+      "missing": [
+        "URL sync",
+        "Persistent filters"
+      ]
+    },
+    "developer_experience": {
+      "score": 6,
+      "max": 10,
+      "missing": [
+        "Strict TS",
+        "Unit tests"
+      ]
+    }
+  },
+  "issues": {
+    "critical": [
+      {
+        "id": "C1",
+        "title": "No mobile navigation",
+        "description": "Sidebar hidden on mobile with no hamburger menu alternative",
+        "impact": "Mobile users cannot navigate",
+        "effort": "Medium"
+      },
+      {
+        "id": "C2",
+        "title": "No charting library",
+        "description": "Analytics page lacks proper charts despite having rich data",
+        "impact": "Poor data visualization",
+        "effort": "Medium"
+      },
+      {
+        "id": "C3",
+        "title": "No dark mode",
+        "description": "Missing dark mode support and system preference detection",
+        "impact": "User experience in low light",
+        "effort": "Medium"
+      },
+      {
+        "id": "C4",
+        "title": "Missing accessibility",
+        "description": "No ARIA labels, skip links, or screen reader support",
+        "impact": "Excludes users with disabilities",
+        "effort": "High"
+      }
+    ],
+    "major": [
+      {
+        "id": "M1",
+        "title": "No global search",
+        "description": "Search UI exists but not implemented",
+        "impact": "Users cannot search",
+        "effort": "Medium"
+      },
+      {
+        "id": "M2",
+        "title": "Responsive tables",
+        "description": "Tables overflow on small screens",
+        "impact": "Mobile usability",
+        "effort": "Medium"
+      },
+      {
+        "id": "M3",
+        "title": "No data export",
+        "description": "Cannot export to CSV/PDF",
+        "impact": "Data portability",
+        "effort": "Low"
+      },
+      {
+        "id": "M4",
+        "title": "No URL state sync",
+        "description": "Filters reset on page refresh",
+        "impact": "Poor UX for sharing",
+        "effort": "Low"
+      }
+    ],
+    "minor": [
+      {
+        "id": "L1",
+        "title": "Cmd+K not cross-platform",
+        "description": "Search shortcut uses meta key",
+        "impact": "Windows users",
+        "effort": "Low"
+      },
+      {
+        "id": "L2",
+        "title": "No column visibility",
+        "description": "Cannot toggle table columns",
+        "impact": "Table customization",
+        "effort": "Low"
+      },
+      {
+        "id": "L3",
+        "title": "Limited animations",
+        "description": "Loading states lack polish",
+        "impact": "Perceived performance",
+        "effort": "Low"
+      },
+      {
+        "id": "L4",
+        "title": "No offline support",
+        "description": "App requires connectivity",
+        "impact": "Offline users",
+        "effort": "High"
+      }
+    ]
+  },
+  "recommendations": {
+    "high_priority": [
+      "Add mobile-responsive navigation with hamburger menu and slide-out drawer",
+      "Integrate Recharts library for Analytics page visualizations",
+      "Implement dark mode with next-themes and system preference detection",
+      "Add proper ARIA labels, keyboard navigation, and skip links"
+    ],
+    "medium_priority": [
+      "Implement global search with command palette (cmdk)",
+      "Add responsive table handling with horizontal scroll or card view",
+      "Add CSV/PDF export to Transactions, Analytics, and Reports",
+      "Sync filter state to URL query params with nuqs"
+    ],
+    "low_priority": [
+      "Use Ctrl+K for Windows, Cmd+K for Mac",
+      "Add column visibility toggles to DataTable",
+      "Add Framer Motion for polished loading animations",
+      "Consider PWA support with service worker"
+    ]
+  },
+  "tech_stack": {
+    "framework": "Next.js 14+ (App Router)",
+    "ui": "shadcn/ui + Tailwind CSS",
+    "state": "React Query (TanStack)",
+    "api": "OpenAPI codegen client",
+    "testing": "Playwright (e2e configured)",
+    "missing": [
+      "Unit tests",
+      "Charting library",
+      "PWA manifest"
+    ]
+  }
+}

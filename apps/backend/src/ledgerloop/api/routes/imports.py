@@ -22,6 +22,35 @@ from ..auth import require_admin
 router = APIRouter(prefix="/imports", tags=["imports"])
 
 
+def _detect_account_type(account_name: str, filename: str = None) -> str:
+    """Auto-detect account type from name and filename.
+
+    Returns one of: checking, savings, credit_card, loan, investment
+    """
+    name_lower = (account_name or "").lower()
+    file_lower = (filename or "").lower()
+    combined = f"{name_lower} {file_lower}"
+
+    # Credit cards
+    if any(x in combined for x in ['credit', 'visa', 'mastercard', 'amex', 'discover', 'card']):
+        return 'credit_card'
+
+    # Savings
+    if any(x in combined for x in ['saving', 'savings', 'money market', 'mma']):
+        return 'savings'
+
+    # Loans
+    if any(x in combined for x in ['loan', 'mortgage', 'auto', 'student', 'personal loan']):
+        return 'loan'
+
+    # Investment
+    if any(x in combined for x in ['investment', 'brokerage', 'ira', '401k', 'roth']):
+        return 'investment'
+
+    # Default to checking
+    return 'checking'
+
+
 class ParseFileInfo(BaseModel):
     name: str
     type: Optional[str] = None
@@ -66,35 +95,46 @@ async def _read_upload_limited(upload: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-def _ensure_account(account_id: Optional[str]) -> str:
+def _ensure_account(account_id: Optional[str], account_name: str = None, filename: str = None) -> str:
     conn = get_conn()
     if account_id:
-        row = conn.execute("SELECT id FROM account WHERE id = ?", [account_id]).fetchone()
+        row = conn.execute("SELECT id, type FROM account WHERE id = ?", [account_id]).fetchone()
         if row:
+            # Update type if still unknown
+            if row[1] == 'unknown' and (account_name or filename):
+                detected_type = _detect_account_type(account_name or "", filename)
+                conn.execute("UPDATE account SET type = ? WHERE id = ?", [detected_type, account_id])
             return account_id
-    # create default account
+    # create default account with auto-detected type
     new_id = account_id or str(uuid.uuid4())
+    display_name = account_name or "Imported Account"
+    account_type = _detect_account_type(display_name, filename)
     conn.execute(
         "INSERT INTO account (id, name, type, currency) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
-        [new_id, "Imported Account", "checking", "USD"],
+        [new_id, display_name, account_type, "USD"],
     )
     return new_id
 
 
-def _find_or_create_account_by_last4(last4: str, default_name: str = None) -> str:
+def _find_or_create_account_by_last4(last4: str, default_name: str = None, filename: str = None) -> str:
     """Find an account by last4; create if not found.
 
     Returns the account id.
     """
     conn = get_conn()
-    row = conn.execute("SELECT id FROM account WHERE last4 = ? LIMIT 1", [last4]).fetchone()
+    row = conn.execute("SELECT id, type FROM account WHERE last4 = ? LIMIT 1", [last4]).fetchone()
     if row:
+        # Update type if still unknown
+        if row[1] == 'unknown' and (default_name or filename):
+            detected_type = _detect_account_type(default_name or "", filename)
+            conn.execute("UPDATE account SET type = ? WHERE id = ?", [detected_type, row[0]])
         return row[0]
     new_id = str(uuid.uuid4())
     name = default_name or f"Bank Account ••••{last4}"
+    account_type = _detect_account_type(name, filename)
     conn.execute(
         "INSERT INTO account (id, name, type, currency, last4) VALUES (?, ?, ?, ?, ?)",
-        [new_id, name, "checking", "USD", last4],
+        [new_id, name, account_type, "USD", last4],
     )
     return new_id
 
@@ -292,7 +332,7 @@ def delete_run(run_id: str):
         _delete_in("match_transfer", "left_tx_id", tx_ids, or_second=("left_tx_id","right_tx_id"))
         _delete_in("recurring_tx", "tx_id", tx_ids)
         _delete_in("transaction_tag", "tx_id", tx_ids)
-        _delete_in([transaction], "id", tx_ids)
+        _delete_in("transaction", "id", tx_ids)
         _delete_in("transaction_ingest", "tx_id", tx_ids)
     # delete raw_records and files by run id to avoid FK mismatch
     try:
@@ -712,10 +752,15 @@ async def _process_import_with_workflow(run_id: str, account_id: str):
 
 
 async def _run_builtin_detectors(account_id: str):
-    """Mark Zelle/income/adjustments and detect recurring patterns post-import."""
+    """Run all detection pipelines in correct order post-import.
+
+    Order: Zelle → Income → Adjustments → Transfers → P2P → Recurring
+    Transfer and P2P MUST run before Recurring to exclude them from recurring patterns.
+    """
     try:
         conn = get_conn()
-        # Zelle: scan and tag this account's transactions
+
+        # 1. Zelle: scan and tag this account's transactions
         rows = conn.execute("SELECT id, description_norm FROM [transaction] WHERE account_id = ?", [account_id]).fetchall()
         tagged = 0
         for tx_id, desc in rows:
@@ -728,16 +773,34 @@ async def _run_builtin_detectors(account_id: str):
             if info.get("counterparty"):
                 conn.execute("UPDATE [transaction] SET zelle_counterparty = ? WHERE id = ?", [info["counterparty"], tx_id])
             tagged += 1
-        # Income
+
+        # 2. Income detection
         rows = conn.execute("SELECT id, posted_at, amount, description_norm FROM [transaction] WHERE account_id = ?", [account_id]).fetchall()
         records = [{"id": r[0], "posted_at": r[1], "amount": r[2], "description_norm": r[3]} for r in rows]
         for tx_id in mark_income(records):
             conn.execute("UPDATE [transaction] SET is_income = TRUE WHERE id = ?", [tx_id])
-        # Adjustments
+
+        # 3. Adjustments detection
         for tx_id in mark_adjustments(records):
             conn.execute("UPDATE [transaction] SET is_adjustment = TRUE WHERE id = ?", [tx_id])
 
-        # Recurring detection: auto-detect recurring patterns and create pending series
+        # 4. Transfer detection - BEFORE recurring to exclude from patterns
+        try:
+            from ...transfers import suggest_transfers_v2
+            transfer_result = suggest_transfers_v2()
+            print(f"Transfer detection: {transfer_result.get('created', 0)} pairs found")
+        except Exception as transfer_err:
+            print(f"Transfer detection error (non-fatal): {transfer_err}")
+
+        # 5. Full P2P detection - BEFORE recurring to exclude from patterns
+        try:
+            from ...p2p_detection import run_p2p_detection
+            p2p_result = run_p2p_detection(limit=10000)
+            print(f"P2P detection: {p2p_result.get('detected', 0)} transactions detected")
+        except Exception as p2p_err:
+            print(f"P2P detection error (non-fatal): {p2p_err}")
+
+        # 6. Recurring detection - AFTER transfers/P2P are marked
         try:
             from ...recurring import suggest_recurring
             suggest_result = suggest_recurring(min_occurrences=3)

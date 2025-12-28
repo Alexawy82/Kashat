@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, UTC
+from datetime import datetime, date, UTC
 from typing import Dict, List, Tuple
 
 # Avoid importing DB at module import to keep pure helpers testable without sqlite3
@@ -128,6 +128,27 @@ def _is_income_description(desc: str | None) -> bool:
     return bool(_INCOME_DESC_RE.search(desc))
 
 
+def _parse_date(val) -> date:
+    """Parse date from various formats (datetime, date, or string)."""
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    if isinstance(val, str):
+        # Try ISO format first (YYYY-MM-DD)
+        try:
+            return datetime.fromisoformat(val.split('T')[0]).date()
+        except ValueError:
+            pass
+        # Try other common formats
+        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y'):
+            try:
+                return datetime.strptime(val, fmt).date()
+            except ValueError:
+                continue
+    return date.today()  # Fallback
+
+
 def suggest_transfers_v2(max_days: int = 2, amount_tolerance: float = 0.01, limit: int = 5000) -> Dict[str, int]:
     from .db import get_conn
 
@@ -136,7 +157,7 @@ def suggest_transfers_v2(max_days: int = 2, amount_tolerance: float = 0.01, limi
         """
         SELECT id, account_id, posted_at, amount, description_norm
         FROM [transaction]
-        WHERE description_norm ILIKE '%transfer%'
+        WHERE LOWER(description_norm) LIKE '%transfer%'
           AND is_income = FALSE
         ORDER BY posted_at
         LIMIT ?
@@ -149,7 +170,7 @@ def suggest_transfers_v2(max_days: int = 2, amount_tolerance: float = 0.01, limi
             continue
         info = _parse_ob(desc or "")
         if info:
-            parsed.append({"id": id_, "account_id": acc, "posted_at": dt, "amount": amt, "info": info})
+            parsed.append({"id": id_, "account_id": acc, "posted_at": _parse_date(dt), "amount": amt, "info": info})
 
     suggested = 0
     for i, a in enumerate(parsed):
@@ -202,7 +223,7 @@ def list_transfers(status: str = "pending") -> List[Dict]:
         JOIN [transaction] ta ON ta.id = mt.left_tx_id
         JOIN [transaction] tb ON tb.id = mt.right_tx_id
         WHERE {where}
-        ORDER BY COALESCE(mt.decided_at, TIMESTAMP '1970-01-01') DESC, mt.score DESC
+        ORDER BY COALESCE(mt.decided_at, '1970-01-01') DESC, mt.score DESC
         """
     ).fetchall()
     cols = [c[0] for c in conn.description]
@@ -335,10 +356,10 @@ def suggest_transfers_v3(
             OR LOWER(c.name) LIKE '%zelle%'
             OR LOWER(c.name) LIKE '%venmo%'
             -- OR has transfer-related description
-            OR t.description_norm ILIKE '%transfer%'
-            OR t.description_norm ILIKE '%zelle%'
-            OR t.description_norm ILIKE '%venmo%'
-            OR t.description_norm ILIKE '%xfer%'
+            OR LOWER(t.description_norm) LIKE '%transfer%'
+            OR LOWER(t.description_norm) LIKE '%zelle%'
+            OR LOWER(t.description_norm) LIKE '%venmo%'
+            OR LOWER(t.description_norm) LIKE '%xfer%'
         )
           AND t.is_income = FALSE
         ORDER BY t.posted_at DESC

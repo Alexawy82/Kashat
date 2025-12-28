@@ -1,0 +1,1394 @@
+openapi: 3.0.3
+info:
+  title: LedgerLoop API
+  description: |
+    Complete personal finance management API with local-first privacy.
+    
+    Features:
+    - PDF/CSV import with deterministic parsing
+    - AI-powered transaction classification (local LLM)
+    - Sophisticated deduplication and validation
+    - Real-time analytics and insights
+    - Transfer detection and recurring payment analysis
+    - Complete audit logging and traceability
+  version: 1.0.0
+  contact:
+    name: LedgerLoop
+    url: https://github.com/your-repo/ledgerloop
+
+servers:
+  - url: http://localhost:8000/api
+    description: Local development server
+  - url: http://127.0.0.1:8000/api
+    description: Local development server (alternate)
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+  - {}
+
+paths:
+  # Health & Status
+  /health:
+    get:
+      summary: System health check
+      tags: [System]
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  database:
+                    type: object
+                    properties:
+                      connected:
+                        type: boolean
+                      transaction_count:
+                        type: integer
+
+  # Import Operations
+  /imports/csv:
+    post:
+      summary: Upload and parse CSV file
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file to upload
+                account_id:
+                  type: string
+                  description: Target account ID (optional)
+                enable_ai:
+                  type: boolean
+                  default: true
+                  description: Enable AI processing
+      responses:
+        '200':
+          description: Import successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        '400':
+          description: Invalid file format or parsing error
+
+  /imports/pdf:
+    post:
+      summary: Upload and parse PDF statement
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF statement to upload
+                account_id:
+                  type: string
+                  description: Target account ID (optional)
+                enable_ai:
+                  type: boolean
+                  default: true
+                  description: Enable AI processing
+      responses:
+        '200':
+          description: Import successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        '400':
+          description: Invalid PDF format or parsing error
+
+  /imports/runs:
+    get:
+      summary: List import history
+      tags: [Import]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Import runs list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ImportRun'
+
+  /imports/{run_id}/ai-analysis:
+    get:
+      summary: Get AI analysis status for import run
+      tags: [Import, AI]
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: AI analysis status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIAnalysisStatus'
+
+  # Transaction Operations
+  /transactions:
+    get:
+      summary: List transactions with filtering
+      tags: [Transactions]
+      parameters:
+        - name: account_id
+          in: query
+          schema:
+            type: string
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: category_id
+          in: query
+          schema:
+            type: string
+        - name: include_transfers
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: is_business
+          in: query
+          schema:
+            type: boolean
+        - name: desc
+          in: query
+          schema:
+            type: string
+          description: Search in description
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Transaction list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+
+  /transactions/{transaction_id}/category:
+    post:
+      summary: Assign category to transaction
+      tags: [Transactions]
+      parameters:
+        - name: transaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  type: string
+              required: [category_id]
+      responses:
+        '200':
+          description: Category assigned successfully
+        '404':
+          description: Transaction not found
+
+  # Category Management
+  /categories:
+    get:
+      summary: List all categories
+      tags: [Categories]
+      responses:
+        '200':
+          description: Categories list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
+    post:
+      summary: Create new category
+      tags: [Categories]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                parent_id:
+                  type: string
+                  nullable: true
+              required: [name]
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+
+  # Rules Engine
+  /rules:
+    get:
+      summary: List classification rules
+      tags: [Rules]
+      responses:
+        '200':
+          description: Rules list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rule'
+    post:
+      summary: Create new rule
+      tags: [Rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRule'
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+
+  /rules/preview:
+    post:
+      summary: Preview rule matches
+      tags: [Rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                predicate:
+                  type: object
+                  description: Rule predicate JSON
+              required: [predicate]
+      responses:
+        '200':
+          description: Matching transactions preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matches:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Transaction'
+                  count:
+                    type: integer
+
+  # Transfer Detection
+  /transfers:
+    get:
+      summary: List detected transfers
+      tags: [Transfers]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, confirmed, all]
+            default: pending
+      responses:
+        '200':
+          description: Transfer pairs list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TransferPair'
+
+  /transfers/suggest_v2:
+    post:
+      summary: Detect transfer pairs (descriptor-based)
+      tags: [Transfers]
+      parameters:
+        - name: max_days
+          in: query
+          schema:
+            type: integer
+            default: 2
+        - name: amount_tolerance
+          in: query
+          schema:
+            type: number
+            default: 0.01
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5000
+      responses:
+        '200':
+          description: Suggestions created and pending list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created:
+                    type: integer
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group_id:
+                          type: string
+                        tx_ids:
+                          type: array
+                          items:
+                            type: string
+                        confidence:
+                          type: number
+                        amount:
+                          type: number
+                        date_range:
+                          type: array
+                          items:
+                            type: string
+                            description: ISO date
+
+  /transfers/confirm:
+    post:
+      summary: Confirm transfer pair(s)
+      tags: [Transfers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                left_tx_id:
+                  type: string
+                right_tx_id:
+                  type: string
+                group_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Confirmation result
+
+  /transfers/reject:
+    post:
+      summary: Reject transfer pair(s)
+      tags: [Transfers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                left_tx_id:
+                  type: string
+                right_tx_id:
+                  type: string
+                group_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Rejection result
+
+  /transfers/group/{group_id}/analytics:
+    post:
+      summary: Toggle include-in-analytics for a transfer group
+      tags: [Transfers]
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Updated group analytics flag
+
+  # Detection (Zelle / P2P Cashouts)
+  /detect/zelle:
+    post:
+      summary: Detect Zelle transactions
+      tags: [Detect]
+      parameters:
+        - in: query
+          name: commit
+          required: false
+          schema:
+            type: boolean
+          description: Persist tags and fields when true
+      responses:
+        '200':
+          description: Detection result
+
+  /detect/p2p:
+    post:
+      summary: Detect P2P cashouts (Zelle/Venmo/Cash App/WU)
+      tags: [Detect]
+      parameters:
+        - in: query
+          name: commit
+          required: false
+          schema:
+            type: boolean
+          description: Persist tags and fields when true
+      responses:
+        '200':
+          description: Detection result
+
+  # P2P (Summary + Drilldown)
+  /p2p/summary:
+    get:
+      summary: P2P grouped summary (provider + counterparty)
+      tags: [P2P]
+      parameters:
+        - in: query
+          name: provider
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: counterparty
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Summary rows
+
+  /p2p/transactions:
+    get:
+      summary: P2P drilldown transactions for one group
+      tags: [P2P]
+      parameters:
+        - in: query
+          name: provider
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: counterparty
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Transaction rows
+
+  # Recurring Transactions
+  /recurring:
+    get:
+      summary: List recurring transaction series
+      tags: [Recurring]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, confirmed, rejected, all]
+            default: pending
+      responses:
+        '200':
+          description: Recurring series list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecurringSeries'
+
+  /recurring/suggest:
+    post:
+      summary: Detect recurring series and return pending list
+      tags: [Recurring]
+      parameters:
+        - name: min_occurrences
+          in: query
+          schema:
+            type: integer
+            default: 3
+        - name: tol
+          in: query
+          schema:
+            type: number
+            default: 0.02
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5000
+      responses:
+        '200':
+          description: Pending series candidates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    series_id:
+                      type: string
+                    merchant:
+                      type: string
+                    cadence:
+                      type: string
+                    avg_amount:
+                      type: number
+                    confidence:
+                      type: number
+                    next_date:
+                      type: string
+                      format: date
+                    tx_count:
+                      type: integer
+
+  /recurring/confirm:
+    post:
+      summary: Confirm recurring series (single or bulk)
+      tags: [Recurring]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                series_id:
+                  type: string
+                series_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Confirmation result
+
+  /recurring/reject:
+    post:
+      summary: Reject recurring series (single or bulk)
+      tags: [Recurring]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                series_id:
+                  type: string
+                series_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Rejection result
+
+  # Analytics
+  /analytics/summary:
+    get:
+      summary: Get spending summary
+      tags: [Analytics]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Spending summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpendingSummary'
+
+  /analytics/monthly:
+    get:
+      summary: Get monthly breakdown
+      tags: [Analytics]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Monthly data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MonthlyData'
+
+  /analytics/merchants:
+    get:
+      summary: Get top merchants
+      tags: [Analytics]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Top merchants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MerchantData'
+
+  # AI Operations
+  /ai/categorize:
+    post:
+      summary: Trigger AI categorization for transactions
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transaction_ids:
+                  type: array
+                  items:
+                    type: string
+              required: [transaction_ids]
+      responses:
+        '200':
+          description: AI job started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    example: "processing"
+
+  /ai/jobs/{job_id}:
+    get:
+      summary: Get AI job status
+      tags: [AI]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIJobStatus'
+
+  # Analytics
+  /analytics/summary:
+    get:
+      summary: Analytics summary (totals, breakdowns)
+      tags: [Analytics]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: includeTransfers
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Summary data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totals:
+                    type: object
+                    properties:
+                      income: { type: number }
+                      spend: { type: number }
+                      net: { type: number }
+                  byMonth:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MonthlyData'
+                  byCategory:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        category_id: { type: string, nullable: true }
+                        category_name: { type: string, nullable: true }
+                        spend: { type: number }
+                        count: { type: integer }
+                  topMerchants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        merchant: { type: string }
+                        spend: { type: number }
+                        count: { type: integer }
+
+  /analytics/predictions:
+    get:
+      summary: Heuristic predictions (budget risk, savings, recurring)
+      tags: [Analytics]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Prediction results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  budgetRisk:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        category: { type: string }
+                        projected: { type: number }
+                        budget: { type: number }
+                        deltaPct: { type: number }
+                        explanation: { type: string }
+                  savingsOps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        pattern: { type: string }
+                        estMonthlySave: { type: number }
+                        evidence: { type: array, items: { type: string } }
+                        explanation: { type: string }
+                  recurringForecast:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        merchant: { type: string }
+                        nextDate: { type: string, format: date }
+                        expectedAmount: { type: number }
+                        confidence: { type: number }
+
+  # Export
+  /export/csv:
+    get:
+      summary: Export transactions as CSV (streaming)
+      tags: [Export]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: onlyBusiness
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: includeTransfers
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: CSV file
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Suggested file name with date range
+          content:
+            text/csv:
+              schema:
+                type: string
+
+  # Audit Log
+  /audit:
+    get:
+      summary: Get audit log entries
+      tags: [Audit]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: entity_type
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEntry'
+
+  # Real-time
+  /realtime/metrics:
+    get:
+      summary: Get real-time metrics
+      tags: [Realtime]
+      responses:
+        '200':
+          description: Live metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeMetrics'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Admin or API bearer token
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+
+  schemas:
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+        account_id:
+          type: string
+        posted_at:
+          type: string
+          format: date
+        amount:
+          type: number
+          format: float
+        currency:
+          type: string
+          default: "USD"
+        description_norm:
+          type: string
+        payee:
+          type: string
+          nullable: true
+        category_id:
+          type: string
+          nullable: true
+        category_name:
+          type: string
+          nullable: true
+        is_transfer:
+          type: boolean
+        is_business:
+          type: boolean
+        is_income:
+          type: boolean
+        is_adjustment:
+          type: boolean
+        zelle_direction:
+          type: string
+          nullable: true
+        zelle_counterparty:
+          type: string
+          nullable: true
+        p2p_provider:
+          type: string
+          nullable: true
+        p2p_direction:
+          type: string
+          nullable: true
+        p2p_counterparty:
+          type: string
+          nullable: true
+        ai_merchant_name:
+          type: string
+          nullable: true
+        ai_category_suggestions:
+          type: string
+          nullable: true
+        ai_confidence_score:
+          type: number
+          nullable: true
+        ai_processed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        parent_id:
+          type: string
+          nullable: true
+        transaction_count:
+          type: integer
+        total_amount:
+          type: number
+
+    Rule:
+      type: object
+      properties:
+        id:
+          type: string
+        priority:
+          type: integer
+        predicate_json:
+          type: string
+          description: JSON-encoded predicate
+        action_json:
+          type: string
+          description: JSON-encoded action
+        enabled:
+          type: boolean
+
+    CreateRule:
+      type: object
+      properties:
+        priority:
+          type: integer
+        predicate:
+          type: object
+          description: Rule predicate object
+        action:
+          type: object
+          description: Rule action object
+        enabled:
+          type: boolean
+          default: true
+      required: [priority, predicate, action]
+
+    ImportResult:
+      type: object
+      properties:
+        run_id:
+          type: string
+        file_id:
+          type: string
+        inserted:
+          type: integer
+          description: New transactions added
+        duplicates:
+          type: integer
+          description: Duplicates skipped
+        total_rows:
+          type: integer
+          description: Total rows processed
+        balance_validated:
+          type: boolean
+          description: Running balance validation passed
+        ai_enabled:
+          type: boolean
+          description: AI processing enabled
+
+    ImportRun:
+      type: object
+      properties:
+        id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+        files:
+          type: integer
+        file_count:
+          type: integer
+          description: Duplicate of files for compatibility
+        tx_count:
+          type: integer
+        period_start:
+          type: string
+          format: date
+          nullable: true
+        period_end:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+          description: empty | ready | completed
+        summary_available:
+          type: boolean
+        user_note:
+          type: string
+          nullable: true
+
+    AIAnalysisStatus:
+      type: object
+      properties:
+        analysis_complete:
+          type: boolean
+        enhanced_count:
+          type: integer
+        avg_quality_score:
+          type: number
+        anomalies_detected:
+          type: integer
+        suggested_rules_count:
+          type: integer
+
+    AIJobStatus:
+      type: object
+      properties:
+        id:
+          type: string
+        job_type:
+          type: string
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        total_transactions:
+          type: integer
+        processed_transactions:
+          type: integer
+        enhanced_transactions:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+
+    TransferPair:
+      type: object
+      properties:
+        left_tx_id:
+          type: string
+        right_tx_id:
+          type: string
+        group_id:
+          type: string
+          nullable: true
+        score:
+          type: number
+        method:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    RecurringSeries:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        cadence:
+          type: string
+        anchor_day:
+          type: integer
+          nullable: true
+        amount_mean:
+          type: number
+        amount_sd:
+          type: number
+        last_date:
+          type: string
+          format: date
+          nullable: true
+        next_date:
+          type: string
+          format: date
+          nullable: true
+        occurrences:
+          type: integer
+        confidence:
+          type: number
+
+    SpendingSummary:
+      type: object
+      properties:
+        total_spent:
+          type: number
+        total_income:
+          type: number
+        net_flow:
+          type: number
+        top_categories:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+              amount:
+                type: number
+              count:
+                type: integer
+        period_comparison:
+          type: object
+          properties:
+            previous_period:
+              type: number
+            change_percent:
+              type: number
+
+    MonthlyData:
+      type: object
+      properties:
+        month:
+          type: string
+          format: date
+        spent:
+          type: number
+        income:
+          type: number
+        net:
+          type: number
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+              amount:
+                type: number
+
+    MerchantData:
+      type: object
+      properties:
+        merchant:
+          type: string
+        total_amount:
+          type: number
+        transaction_count:
+          type: integer
+        avg_amount:
+          type: number
+        categories:
+          type: array
+          items:
+            type: string
+
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        action:
+          type: string
+        payload_json:
+          type: string
+          nullable: true
+        ts:
+          type: string
+          format: date-time
+        actor:
+          type: string
+          nullable: true
+
+    RealtimeMetrics:
+      type: object
+      properties:
+        active_sessions:
+          type: integer
+        recent_imports:
+          type: integer
+        processing_jobs:
+          type: integer
+        database_size:
+          type: string
+        last_activity:
+          type: string
+          format: date-time
+
+tags:
+  - name: System
+    description: Health checks and system status
+  - name: Import
+    description: File upload and processing
+  - name: Transactions
+    description: Transaction management
+  - name: Categories
+    description: Category management
+  - name: Rules
+    description: Classification rules
+  - name: Detect
+    description: Detection jobs (Zelle/P2P/etc.)
+  - name: Transfers
+    description: Transfer detection
+  - name: P2P
+    description: P2P cashouts summary and drilldown
+  - name: Recurring
+    description: Recurring transaction analysis
+  - name: Analytics
+    description: Insights and reporting
+  - name: AI
+    description: AI-powered operations
+  - name: Export
+    description: Data export
+  - name: Audit
+    description: Audit logging
+  - name: Realtime
+    description: Real-time features

@@ -1,8 +1,0 @@
-[0;34m🔍 LedgerLoop Application Verification[0m
-======================================
-
-[0;34m1. Checking Service Status[0m
-------------------------
-[0;31m❌ Backend API is not running[0m
-[0;31m❌ Frontend Web is not running[0m
-[1;33m⚠️  Backend not running. Start with: ./start start backend[0m

@@ -32,6 +32,9 @@ const nextConfig = {
       { source: '/categories', destination: '/settings/categories', permanent: true },
       { source: '/rules', destination: '/settings/automation', permanent: true },
       { source: '/pulse', destination: '/settings/system', permanent: true },
+      // Renamed pages
+      { source: '/calendar', destination: '/bills', permanent: true },
+      { source: '/recurring', destination: '/subscriptions', permanent: true },
     ]
   },
   async rewrites() {

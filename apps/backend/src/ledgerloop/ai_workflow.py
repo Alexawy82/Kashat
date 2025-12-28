@@ -214,51 +214,104 @@ class AIWorkflowEngine:
         return analysis.ai_enhanced_count
     
     async def _apply_smart_categorization(
-        self, 
-        transactions: List[Dict[str, Any]], 
+        self,
+        transactions: List[Dict[str, Any]],
         config: WorkflowConfig
     ) -> int:
-        """Apply smart categorization to transactions"""
+        """Apply smart categorization to transactions with concurrent AI calls."""
+        import json
+        import uuid
+        from .ai import get_ai_service
+        from .ai_categories import SmartCategorySuggestion
+
         conn = get_conn()
-        categorized_count = 0
-        
-        for tx in transactions:
-            # Skip if already categorized
-            existing_cat = conn.execute(
-                "SELECT category_id FROM transaction_category WHERE tx_id = ?", 
-                [tx['id']]
-            ).fetchone()
-            
-            if existing_cat:
-                categorized_count += 1
+
+        if not transactions:
+            return 0
+
+        # Pre-fetch already categorized transaction IDs (batch query)
+        tx_ids = [tx['id'] for tx in transactions]
+        placeholders = ','.join(['?' for _ in tx_ids])
+        already_categorized = set(
+            row[0] for row in conn.execute(
+                f"SELECT tx_id FROM transaction_category WHERE tx_id IN ({placeholders})",
+                tx_ids
+            ).fetchall()
+        )
+
+        # Pre-fetch category mappings (cache)
+        category_mappings = {}
+        for row in conn.execute("SELECT provider, source_label, category_id FROM ai_category_mapping").fetchall():
+            key = (row[0], row[1])  # (provider, source_label)
+            category_mappings[key] = row[2]
+
+        # Pre-fetch category names
+        category_names = {
+            row[0]: row[1] for row in conn.execute("SELECT id, name FROM category").fetchall()
+        }
+
+        # Filter to uncategorized transactions
+        uncategorized = [tx for tx in transactions if tx['id'] not in already_categorized]
+        categorized_count = len(already_categorized)
+
+        if not uncategorized:
+            return categorized_count
+
+        ai_service = get_ai_service()
+
+        # Semaphore for concurrent AI calls (5 max)
+        sem = asyncio.Semaphore(5)
+
+        async def analyze_one(tx: Dict[str, Any]):
+            async with sem:
+                try:
+                    return await asyncio.wait_for(
+                        ai_service.analyze_transaction(tx['description'], float(tx['amount'])),
+                        timeout=35.0
+                    )
+                except Exception as e:
+                    return None
+
+        # Run AI analysis concurrently
+        ai_results = await asyncio.gather(
+            *[analyze_one(tx) for tx in uncategorized],
+            return_exceptions=True
+        )
+
+        # Process results and batch the database writes
+        categorizations = []  # [(tx_id, category_id, category_name, confidence, match_type)]
+
+        for tx, insights in zip(uncategorized, ai_results):
+            if insights is None or isinstance(insights, Exception):
                 continue
-            
-            # Provider-driven category suggestions mapped to existing categories
-            from .ai import get_ai_service
-            ai_service = get_ai_service()
-            insights = await ai_service.analyze_transaction(tx['description'], float(tx['amount']))
+
             ai_suggestions = insights.category_suggestions
-            # Provider mapping first
-            from .db import get_conn as _get_conn
-            conn = _get_conn()
+            if not ai_suggestions:
+                continue
+
+            # Try provider mapping first (using cached mappings)
             mapped_id = None
             mapped_name = None
+            prov = insights.provider_name or None
+
             for s in ai_suggestions:
                 src = s.category_name
-                prov = insights.provider_name or None
-                row = conn.execute("SELECT category_id FROM ai_category_mapping WHERE provider IS ? AND source_label = ?", [prov, src]).fetchone()
-                if not row and prov is not None:
-                    row = conn.execute("SELECT category_id FROM ai_category_mapping WHERE provider IS NULL AND source_label = ?", [src]).fetchone()
-                if row:
-                    mapped_id = row[0]
-                    nrow = conn.execute("SELECT name FROM category WHERE id = ?", [mapped_id]).fetchone()
-                    mapped_name = nrow[0] if nrow else None
+                # Try exact provider match
+                cat_id = category_mappings.get((prov, src))
+                # Fallback to null provider
+                if not cat_id and prov is not None:
+                    cat_id = category_mappings.get((None, src))
+                if cat_id:
+                    mapped_id = cat_id
+                    mapped_name = category_names.get(cat_id)
                     break
+
+            # Build suggestions list
             exact = self.category_matcher.find_exact_matches(ai_suggestions)
             fuzzy = self.category_matcher.find_fuzzy_matches(ai_suggestions)
             suggestions = []
             used_ids = set()
-            from .ai_categories import SmartCategorySuggestion
+
             if mapped_id and mapped_name:
                 suggestions.append(SmartCategorySuggestion(
                     category_id=mapped_id,
@@ -268,6 +321,7 @@ class AIWorkflowEngine:
                     match_type='mapped'
                 ))
                 used_ids.add(mapped_id)
+
             for m in exact + fuzzy:
                 if m.category_id not in used_ids:
                     suggestions.append(SmartCategorySuggestion(
@@ -278,42 +332,39 @@ class AIWorkflowEngine:
                         match_type=m.match_type
                     ))
                     used_ids.add(m.category_id)
-            
+
             # Auto-apply if confidence is high enough
             if suggestions and suggestions[0].confidence >= config.ai_confidence_threshold:
-                best_suggestion = suggestions[0]
-                
-                try:
-                    # Apply category
-                    conn.execute(
-                        "INSERT INTO transaction_category (tx_id, category_id, applied_by) VALUES (?, ?, ?)",
-                        [tx['id'], best_suggestion.category_id, "ai_workflow"]
-                    )
-                    categorized_count += 1
-                    
-                    # Log the action
-                    import json
-                    import uuid
-                    conn.execute(
-                        "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        [
-                            str(uuid.uuid4()),
-                            [transaction],
-                            tx['id'],
-                            "ai_auto_categorized",
-                            json.dumps({
-                                "category_id": best_suggestion.category_id,
-                                "category_name": best_suggestion.category_name,
-                                "confidence": best_suggestion.confidence,
-                                "match_type": best_suggestion.match_type
-                            }),
-                            datetime.now(UTC),
-                            "ai_workflow"
-                        ]
-                    )
-                except Exception as e:
-                    print(f"Error auto-categorizing transaction {tx['id']}: {e}")
-        
+                best = suggestions[0]
+                categorizations.append((
+                    tx['id'], best.category_id, best.category_name,
+                    best.confidence, best.match_type
+                ))
+
+        # Batch insert categorizations
+        for tx_id, cat_id, cat_name, conf, match_type in categorizations:
+            try:
+                conn.execute(
+                    "INSERT INTO transaction_category (tx_id, category_id, applied_by) VALUES (?, ?, ?)",
+                    [tx_id, cat_id, "ai_workflow"]
+                )
+                categorized_count += 1
+
+                # Log the action
+                conn.execute(
+                    "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        str(uuid.uuid4()), "transaction", tx_id, "ai_auto_categorized",
+                        json.dumps({
+                            "category_id": cat_id, "category_name": cat_name,
+                            "confidence": conf, "match_type": match_type
+                        }),
+                        datetime.now(UTC), "ai_workflow"
+                    ]
+                )
+            except Exception as e:
+                print(f"Error auto-categorizing transaction {tx_id}: {e}")
+
         return categorized_count
     
     async def _detect_and_handle_duplicates(

@@ -165,7 +165,7 @@ def delete_all_data(body: DeleteAllBody) -> dict:
         "recurring_tx",
         "recurring_series",
         "event_log",
-        [transaction],
+        "transaction",
         "rule",
         "ai_bulk_job",
         "ai_workflow_run",
@@ -460,6 +460,46 @@ def backfill_merchant_names() -> dict:
     return {"updated": updated, "total_processed": len(rows), "message": f"Backfilled merchant names for {updated} transactions"}
 
 
+@router.post("/data/fix-account-types")
+def fix_account_types() -> dict:
+    """Fix existing accounts with 'unknown' type by auto-detecting from account name.
+
+    Uses keyword matching to set: checking, savings, credit_card, loan, investment
+    """
+    conn = get_conn()
+
+    # Get accounts with unknown or null type
+    rows = conn.execute("""
+        SELECT id, name FROM account WHERE type IS NULL OR type = 'unknown' OR type = ''
+    """).fetchall()
+
+    updated = 0
+    for row in rows:
+        acc_id, name = row
+        name_lower = (name or "").lower()
+
+        # Credit cards
+        if any(x in name_lower for x in ['credit', 'visa', 'mastercard', 'amex', 'discover', 'card']):
+            new_type = 'credit_card'
+        # Savings
+        elif any(x in name_lower for x in ['saving', 'savings', 'money market', 'mma']):
+            new_type = 'savings'
+        # Loans
+        elif any(x in name_lower for x in ['loan', 'mortgage', 'auto', 'student', 'personal loan']):
+            new_type = 'loan'
+        # Investment
+        elif any(x in name_lower for x in ['investment', 'brokerage', 'ira', '401k', 'roth']):
+            new_type = 'investment'
+        # Default to checking
+        else:
+            new_type = 'checking'
+
+        conn.execute("UPDATE account SET type = ? WHERE id = ?", [new_type, acc_id])
+        updated += 1
+
+    return {"updated": updated, "message": f"Fixed {updated} accounts with auto-detected types"}
+
+
 @router.post("/data/wipe-all")
 def wipe_all_data(body: WipeAllBody) -> dict:
     """Delete all rows from all application tables in a safe order.
@@ -495,7 +535,7 @@ def wipe_all_data(body: WipeAllBody) -> dict:
         del_all(t)
     # Core tables
     for t in (
-        [transaction],
+        "transaction",
         "import_file",
         "import_run",
         "recurring_series",

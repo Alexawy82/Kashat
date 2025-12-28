@@ -253,6 +253,7 @@ async def ai_detect_recurring(
     from ...recurring import detect_recurring_candidates, Tx
     from ...db import get_conn
     from ...ai import get_ai_service
+    from datetime import datetime
 
     conn = get_conn()
 
@@ -270,7 +271,15 @@ async def ai_detect_recurring(
         """
     ).fetchall()
 
-    txs = [Tx(*r) for r in rows]
+    # Parse posted_at strings to date objects
+    def parse_date(d):
+        if isinstance(d, date):
+            return d
+        if isinstance(d, str):
+            return datetime.fromisoformat(d.replace('Z', '+00:00')).date()
+        return d
+
+    txs = [Tx(r[0], r[1], parse_date(r[2]), r[3], r[4]) for r in rows]
     candidates = detect_recurring_candidates(txs, min_occurrences=min_occurrences)
 
     # Filter by confidence and enhance with AI insights

@@ -1,0 +1,17 @@
+[run]
+source = apps/backend/src/kashat
+omit =
+    */tests/*
+    */migrations/*
+    apps/backend/src/kashat/ai_*.py
+    apps/backend/src/kashat/parse/banks/*.py
+    apps/backend/src/ledgerloop/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    @overload
+    raise NotImplementedError
+    if __name__ == .__main__.
+

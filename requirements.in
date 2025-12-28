@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+duckdb
+python-dotenv
+pdfplumber
+python-multipart
+pyarrow
+requests
+openai
+numpy
+pytest
+pytest-cov
+pytest-asyncio
+httpx
+prometheus-client
+

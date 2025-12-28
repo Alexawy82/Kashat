@@ -427,8 +427,10 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
 
     # Extend recurring_series with new fields
     recurring_cols = [
+        ("first_date", "TEXT"),  # First transaction date in the series
         ("last_date", "TEXT"),
         ("next_date", "TEXT"),
+        ("occurrences", "INTEGER"),  # Number of transactions in the series
         ("price_hike", "INTEGER"),
         ("recurring_type", "TEXT"),
         ("sub_category", "TEXT"),
@@ -444,6 +446,9 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
         ("llm_classified_at", "TEXT"),
         ("prediction_confidence", "REAL"),
         ("next_predicted_amount", "REAL"),
+        ("series_type", "TEXT"),  # "standard" or "p2p_recurring" - distinguishes P2P-originated recurring
+        ("p2p_counterparty_id", "TEXT"),  # Link to counterparty table for P2P recurring
+        ("p2p_service", "TEXT"),  # venmo, zelle, cashapp, paypal, etc. for P2P recurring
     ]
     for item in recurring_cols:
         col, coltype = item[0], item[1]
@@ -578,6 +583,145 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
     # Index for fast lookups by description hash
     try:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mic_hash ON merchant_intelligence_cache(description_hash)")
+    except Exception:
+        pass
+
+    # P2P Transaction tracking table
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS p2p_transaction (
+            id TEXT PRIMARY KEY,
+            tx_id TEXT NOT NULL,
+            service TEXT NOT NULL,
+            counterparty_raw TEXT,
+            counterparty_normalized TEXT,
+            direction TEXT,
+            confidence REAL DEFAULT 1.0,
+            detection_method TEXT,
+            ai_analyzed_at TEXT,
+            metadata TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (tx_id) REFERENCES [transaction](id)
+        )
+        """
+    )
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_p2p_tx ON p2p_transaction(tx_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_p2p_counterparty ON p2p_transaction(counterparty_normalized)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_p2p_service ON p2p_transaction(service)")
+    except Exception:
+        pass
+
+    # P2P transaction enrichment columns
+    _add_column_if_missing(conn, "p2p_transaction", "transaction_type", "TEXT")  # p2p_transfer, subscription, purchase
+    _add_column_if_missing(conn, "p2p_transaction", "counterparty_type", "TEXT")  # person, business, unknown
+    _add_column_if_missing(conn, "p2p_transaction", "merchant_category", "TEXT")  # entertainment, utilities, etc.
+    _add_column_if_missing(conn, "p2p_transaction", "ai_enriched_at", "TEXT")
+    _add_column_if_missing(conn, "p2p_transaction", "ai_confidence", "REAL")
+    _add_column_if_missing(conn, "p2p_transaction", "is_recurring", "INTEGER", "0")
+    _add_column_if_missing(conn, "p2p_transaction", "recurring_series_id", "TEXT")  # Link to recurring_series if applicable
+
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_p2p_type ON p2p_transaction(transaction_type)")
+    except Exception:
+        pass
+
+    # Counterparty tracking table
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS counterparty (
+            id TEXT PRIMARY KEY,
+            name_normalized TEXT NOT NULL UNIQUE,
+            aliases TEXT,
+            total_sent REAL DEFAULT 0,
+            total_received REAL DEFAULT 0,
+            transaction_count INTEGER DEFAULT 0,
+            first_seen TEXT,
+            last_seen TEXT,
+            is_recurring INTEGER DEFAULT 0,
+            notes TEXT
+        )
+        """
+    )
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_counterparty_name ON counterparty(name_normalized)")
+    except Exception:
+        pass
+
+    # Counterparty enrichment columns
+    _add_column_if_missing(conn, "counterparty", "counterparty_type", "TEXT")  # person, business, unknown
+    _add_column_if_missing(conn, "counterparty", "category", "TEXT")  # merchant category if business
+
+    # Manual Assets Table (for net worth tracking)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS asset (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            asset_type TEXT NOT NULL,
+            subtype TEXT,
+            current_value REAL NOT NULL DEFAULT 0,
+            purchase_price REAL,
+            purchase_date TEXT,
+            weight_oz REAL,
+            weight_unit TEXT DEFAULT 'oz',
+            spot_price REAL,
+            premium_paid REAL,
+            metal_type TEXT,
+            address TEXT,
+            property_type TEXT,
+            year INTEGER,
+            make TEXT,
+            model TEXT,
+            vin TEXT,
+            institution TEXT,
+            account_type TEXT,
+            valuation_method TEXT,
+            monthly_revenue REAL,
+            multiplier REAL,
+            notes TEXT,
+            is_liquid INTEGER DEFAULT 0,
+            auto_update INTEGER DEFAULT 0,
+            update_source TEXT,
+            last_updated TEXT,
+            update_reminder TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_type ON asset(asset_type)")
+    except Exception:
+        pass
+
+    # Liabilities Table
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS liability (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            liability_type TEXT NOT NULL,
+            original_amount REAL,
+            current_balance REAL NOT NULL DEFAULT 0,
+            interest_rate REAL,
+            monthly_payment REAL,
+            linked_asset_id TEXT,
+            start_date TEXT,
+            expected_payoff_date TEXT,
+            lender TEXT,
+            account_number TEXT,
+            notes TEXT,
+            auto_calculate INTEGER DEFAULT 0,
+            linked_account_id TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (linked_asset_id) REFERENCES asset(id) ON DELETE SET NULL
+        )
+        """
+    )
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_liability_type ON liability(liability_type)")
     except Exception:
         pass
 

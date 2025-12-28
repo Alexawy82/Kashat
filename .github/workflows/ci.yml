@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        env:
+          PYTHONPATH: apps/backend/src
+          LEDGERLOOP_DATA_DIR: ${{ runner.temp }}/ll_data
+        run: |
+          mkdir -p "$LEDGERLOOP_DATA_DIR"
+          pytest -q
+      - name: Security audit (pip-audit)
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit
+          pip-audit || true
+
+  frontend-ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install deps
+        run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE: http://localhost:8000/api
+        run: npm run build
+      - name: npm audit (non-blocking)
+        continue-on-error: true
+        run: npm audit --omit=dev || true
+      - name: API smoke test
+        env:
+          PYTHONPATH: apps/backend/src
+          LEDGERLOOP_DATA_DIR: ${{ runner.temp }}/ll_smoke
+        run: |
+          mkdir -p "$LEDGERLOOP_DATA_DIR"
+          pytest -q apps/backend/tests/test_api_smoke.py

@@ -10,8 +10,11 @@ import {
   Upload, LayoutGrid, TrendingUp, TrendingDown, BarChart3,
   DollarSign, PiggyBank, Loader2, AlertTriangle, LineChart, Sparkles
 } from 'lucide-react'
+import { LoadingSpinner, CardSkeleton } from '@/components/ui/LoadingSpinner'
+import { SpendingChart } from '@/components/charts'
 
 // Dashboard components
+import { DashboardHeader } from '@/components/dashboard/DashboardHeader'
 import { HealthScoreCard } from '@/components/dashboard/HealthScoreCard'
 import { RunwayCard } from '@/components/dashboard/RunwayCard'
 import { IntelligenceFeed } from '@/components/dashboard/IntelligenceFeed'
@@ -19,11 +22,16 @@ import { SpendingBehaviorCard } from '@/components/dashboard/SpendingBehaviorCar
 import { CashflowSummaryCard } from '@/components/dashboard/CashflowSummaryCard'
 import { AnomalyAlerts } from '@/components/dashboard/AnomalyAlerts'
 import { RecurringSummaryWidget } from '@/components/dashboard/RecurringSummaryWidget'
+import { NetWorthCard } from '@/components/dashboard/NetWorthCard'
+import { BudgetSummaryCard } from '@/components/dashboard/BudgetSummaryCard'
+import { UpcomingBillsCard } from '@/components/dashboard/UpcomingBillsCard'
+import { AIInsightsWidget } from '@/components/dashboard/AIInsightsWidget'
 
 // Analytics hooks
 import {
   useAnalyticsDashboard,
   useAnalyticsMerchants,
+  useAnalyticsMonthly,
   useSpendingPatterns,
   useAITrends,
   useSpendingForecast,
@@ -52,6 +60,9 @@ export default function DashboardPage() {
           </Button>
         </Link>
       </div>
+
+      {/* Always-visible key metrics */}
+      <DashboardHeader />
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
@@ -102,13 +113,23 @@ export default function DashboardPage() {
 function OverviewTab() {
   return (
     <>
-      {/* Stats Grid - Top Row */}
+      {/* Stats Grid - Top Row: Net Worth, Cash Flow, Budget */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <NetWorthCard />
+        <CashflowSummaryCard />
+        <BudgetSummaryCard />
+      </div>
+
+      {/* Second Row: Health, Runway, Upcoming Bills, Spending */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <HealthScoreCard />
         <RunwayCard />
-        <CashflowSummaryCard />
+        <UpcomingBillsCard />
         <SpendingBehaviorCard />
       </div>
+
+      {/* AI Insights Widget - Full Width */}
+      <AIInsightsWidget />
 
       {/* Main Content Area */}
       <div className="grid gap-4 lg:grid-cols-7">
@@ -130,9 +151,9 @@ function OverviewTab() {
                 </p>
               </div>
             </Link>
-            <Link href="/recurring" className="block">
+            <Link href="/subscriptions" className="block">
               <div className="rounded-xl border bg-card text-card-foreground shadow p-6 hover:bg-accent/50 transition-colors cursor-pointer">
-                <h3 className="font-semibold text-sm">Recurring Detection</h3>
+                <h3 className="font-semibold text-sm">Subscriptions</h3>
                 <p className="text-xs text-muted-foreground mt-1">
                   Review detected subscriptions and recurring charges
                 </p>
@@ -165,8 +186,16 @@ function OverviewTab() {
 function SpendingTab() {
   const { data: dashboardData, isLoading: dashboardLoading } = useAnalyticsDashboard({ include_ai: true })
   const { data: merchantsData, isLoading: merchantsLoading } = useAnalyticsMerchants({ limit: 10 })
+  const { data: monthlyData, isLoading: monthlyLoading } = useAnalyticsMonthly()
   const { data: recurringData, isLoading: recurringLoading } = useRecurringAnalytics()
   const { data: recurringByType } = useSpendingByType()
+
+  // Transform monthly data for chart
+  const chartData = (monthlyData || []).map((m: { month: string; income: number; spend: number }) => ({
+    month: m.month,
+    income: m.income,
+    spending: Math.abs(m.spend),
+  })).reverse()
 
   const dashboard = dashboardData || {}
   const current = dashboard.current_period || {}
@@ -276,6 +305,27 @@ function SpendingTab() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Spending Trend Chart */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Income vs Spending Trend</CardTitle>
+          <CardDescription>6-month overview of your cash flow</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {monthlyLoading ? (
+            <div className="h-[300px] flex items-center justify-center">
+              <LoadingSpinner size="lg" label="Loading chart..." />
+            </div>
+          ) : chartData.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-12">
+              Not enough data to show trends
+            </p>
+          ) : (
+            <SpendingChart data={chartData} height={300} />
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Top Merchants */}
