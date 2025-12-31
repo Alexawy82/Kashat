@@ -1,0 +1,55 @@
+# Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY apps/web/package.json apps/web/package-lock.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY apps/web/ .
+
+# Create public directory if it doesn't exist (Next.js needs it)
+RUN mkdir -p public
+
+# Build arguments for environment
+ARG NEXT_PUBLIC_API_BASE=/api
+ARG NEXT_PUBLIC_ENABLE_REALTIME=0
+ARG LEDGERLOOP_BACKEND_ORIGIN=http://kashat-backend:8000
+ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+ENV NEXT_PUBLIC_ENABLE_REALTIME=$NEXT_PUBLIC_ENABLE_REALTIME
+ENV LEDGERLOOP_BACKEND_ORIGIN=$LEDGERLOOP_BACKEND_ORIGIN
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+# Build the application
+RUN npm run build
+
+# Production stage
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy built application from standalone output
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

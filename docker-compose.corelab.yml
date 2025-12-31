@@ -1,0 +1,64 @@
+services:
+  # ===================
+  # BACKEND (FastAPI)
+  # ===================
+  kashat-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: kashat-backend
+    restart: unless-stopped
+    environment:
+      - KASHAT_DATA_DIR=/data
+      - KASHAT_ENV=production
+      - KASHAT_JWT_SECRET=${KASHAT_JWT_SECRET}
+      - KASHAT_AI_PROVIDER=${KASHAT_AI_PROVIDER:-lmstudio}
+      - KASHAT_AI_LMSTUDIO_BASE_URL=${KASHAT_AI_LMSTUDIO_BASE_URL:-http://192.168.1.228:1234/v1}
+      - KASHAT_CORS=http://kashat.lab-core.local,http://192.168.1.120:3002,http://localhost:3002
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8001:8000"
+    volumes:
+      - /opt/kashat/data:/data
+    networks:
+      - lab-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ===================
+  # FRONTEND (Next.js)
+  # ===================
+  kashat-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: kashat-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE=http://192.168.1.120:8001/api
+      - LEDGERLOOP_BACKEND_ORIGIN=http://kashat-backend:8000
+      - NEXT_PUBLIC_ENABLE_REALTIME=0
+    ports:
+      - "3002:3000"
+    depends_on:
+      kashat-backend:
+        condition: service_healthy
+    networks:
+      - lab-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  lab-net:
+    external: true
