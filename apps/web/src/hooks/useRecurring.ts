@@ -13,6 +13,10 @@ export function useRecurringSummary() {
   })
 }
 
+/**
+ * @deprecated Use `useAllRecurring()` instead which fetches all types in one request.
+ * This hook makes a separate API call for each type.
+ */
 export function useRecurringByType(type: string) {
   return useQuery({
     queryKey: ['recurring', 'by-type', type],
@@ -24,22 +28,37 @@ export function useRecurringByType(type: string) {
   })
 }
 
+/**
+ * @deprecated Use `useAllRecurring()` and access `data.by_type.subscription` instead.
+ */
 export function useSubscriptions() {
   return useRecurringByType('subscriptions')
 }
 
+/**
+ * @deprecated Use `useAllRecurring()` and access `data.by_type.bill` instead.
+ */
 export function useBills() {
   return useRecurringByType('bills')
 }
 
+/**
+ * @deprecated Use `useAllRecurring()` and access `data.by_type.loan` instead.
+ */
 export function useLoans() {
   return useRecurringByType('loans')
 }
 
+/**
+ * @deprecated Use `useAllRecurring()` and access `data.by_type.credit_card` instead.
+ */
 export function useCreditCards() {
   return useRecurringByType('credit-cards')
 }
 
+/**
+ * @deprecated Use `useAllRecurring()` and access `data.by_type.insurance` instead.
+ */
 export function useInsurance() {
   return useRecurringByType('insurance')
 }
@@ -265,6 +284,185 @@ export function useCleanupIntelligenceCache() {
       const { data, error } = await client.post(`/api/recurring/intelligence/cleanup-cache?max_age_days=${maxAgeDays}`)
       if (error) throw error
       return data as any
+    },
+  })
+}
+
+// ============ Series Action Hooks ============
+
+export function useMarkPaid() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (seriesId: string) => {
+      const { data, error } = await client.post(`/api/recurring/${seriesId}/mark-paid`)
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    },
+  })
+}
+
+export function useSkipNext() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (seriesId: string) => {
+      const { data, error } = await client.post(`/api/recurring/${seriesId}/skip-next`)
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    },
+  })
+}
+
+export function usePauseSeries() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (seriesId: string) => {
+      const { data, error } = await client.post(`/api/recurring/${seriesId}/pause`)
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    },
+  })
+}
+
+export function useResumeSeries() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (seriesId: string) => {
+      const { data, error } = await client.post(`/api/recurring/${seriesId}/resume`)
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    },
+  })
+}
+
+export function useCancelSeries() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (seriesId: string) => {
+      const { data, error } = await client.post(`/api/recurring/${seriesId}/cancel`)
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    },
+  })
+}
+
+// =============================================================================
+// Consolidated Hooks - Reduce API calls
+// =============================================================================
+
+export interface RecurringSeries {
+  id: string
+  series_id?: string
+  name: string
+  display_name?: string
+  amount_mean: number
+  monthly_equivalent?: number
+  cadence: string
+  recurring_type: string
+  recurring_type_label?: string
+  sub_category?: string
+  sub_category_label?: string
+  is_essential: boolean
+  status: string
+  next_date?: string
+  last_date?: string
+  occurrences?: number
+  account_name?: string
+  annual_cost?: number
+}
+
+export interface AllEnrichedResponse {
+  all: RecurringSeries[]
+  by_type: {
+    subscription: RecurringSeries[]
+    bill: RecurringSeries[]
+    loan: RecurringSeries[]
+    credit_card: RecurringSeries[]
+    insurance: RecurringSeries[]
+    unknown: RecurringSeries[]
+  }
+  summary: {
+    total_count: number
+    total_monthly: number
+    essential_monthly: number
+    discretionary_monthly: number
+    by_type: Record<string, { count: number; monthly: number }>
+  }
+  pending_count: number
+}
+
+/**
+ * Consolidated hook that fetches all recurring data in one API call.
+ * Replaces: useSubscriptions, useBills, useLoans, useCreditCards, useInsurance
+ */
+export function useAllRecurring() {
+  return useQuery({
+    queryKey: ['recurring', 'all-enriched'],
+    queryFn: async () => {
+      const { data, error } = await client.get<AllEnrichedResponse>('/api/recurring/all-enriched')
+      if (error) throw error
+      return data as AllEnrichedResponse
+    },
+    staleTime: 60_000, // 1 minute
+  })
+}
+
+/**
+ * Trigger reclassification of all series with updated patterns
+ */
+export function useReclassifyAll() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.post('/api/recurring/reclassify-all')
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
+    },
+  })
+}
+
+/**
+ * Reject false positives (gas stations, fast food, etc.)
+ */
+export function useRejectFalsePositives() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.post('/api/recurring/reject-false-positives')
+      if (error) throw error
+      return data as any
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring'] })
     },
   })
 }

@@ -21,6 +21,8 @@ from enum import Enum
 from .ai_analytics import get_ai_analytics_engine, SpendingPersona
 from .ai_forecasting import get_ai_forecasting_engine
 from .db import get_conn
+from . import income_detector
+from . import budget_intelligence
 
 
 class InsightCategory(Enum):
@@ -31,6 +33,12 @@ class InsightCategory(Enum):
     ANOMALY_ALERT = "anomaly_alert"
     FORECAST_WARNING = "forecast_warning"
     GOAL_PROGRESS = "goal_progress"
+    # Budget Intelligence Categories
+    BUDGET_SUGGESTION = "budget_suggestion"
+    BUDGET_PACE_WARNING = "budget_pace_warning"
+    INCOME_DETECTED = "income_detected"
+    CATEGORY_TREND = "category_trend"
+    COMMITTED_SPENDING = "committed_spending"
 
 
 class InsightPriority(Enum):
@@ -112,6 +120,7 @@ class AIInsightsEngine:
         insights.extend(self._generate_trend_notification_insights(account_id))
         insights.extend(self._generate_anomaly_alert_insights(account_id))
         insights.extend(self._generate_forecast_warning_insights(account_id))
+        insights.extend(self._generate_budget_intelligence_insights(account_id))
         
         # Sort by priority and impact score
         insights.sort(key=lambda x: (
@@ -678,16 +687,132 @@ class AIInsightsEngine:
             behavioral_insights=["Import more transactions for detailed analysis"]
         )
     
+    def _generate_budget_intelligence_insights(
+        self,
+        account_id: Optional[str] = None
+    ) -> List[PersonalizedInsight]:
+        """Generate budget intelligence insights using income and spending detection."""
+        insights = []
+
+        try:
+            # 1. Income Detection Insight
+            income_data = income_detector.get_total_monthly_income()
+            if income_data['total_monthly'] > 0:
+                sources = income_data.get('sources', [])
+                unconfirmed = [s for s in sources if not s.get('user_confirmed')]
+
+                if unconfirmed:
+                    insights.append(PersonalizedInsight(
+                        id=f"income_detected_{date.today().isoformat()}",
+                        category=InsightCategory.INCOME_DETECTED,
+                        priority=InsightPriority.MEDIUM,
+                        title=f"Detected ${income_data['total_monthly']:,.0f}/mo Income",
+                        description=f"We detected {len(sources)} income source(s) totaling ${income_data['total_monthly']:,.2f} monthly. Review and confirm to get smart budget suggestions.",
+                        recommendations=[
+                            "Review detected income sources",
+                            "Confirm or adjust amounts for accuracy",
+                            "Create a smart budget based on your income"
+                        ],
+                        impact_score=0.8,
+                        confidence=income_data.get('confidence', 0.7),
+                        data_points={
+                            'total_monthly': income_data['total_monthly'],
+                            'sources_count': len(sources),
+                            'unconfirmed_count': len(unconfirmed)
+                        },
+                        expires_at=date.today() + timedelta(days=30)
+                    ))
+
+            # 2. Budget Suggestion Insight
+            conn = get_conn()
+            existing_budgets = conn.execute(
+                "SELECT COUNT(*) FROM budget WHERE is_active = 1"
+            ).fetchone()[0]
+
+            if existing_budgets == 0 and income_data['total_monthly'] > 0:
+                suggestion = budget_intelligence.generate_budget_suggestion()
+
+                insights.append(PersonalizedInsight(
+                    id=f"budget_suggestion_{date.today().isoformat()}",
+                    category=InsightCategory.BUDGET_SUGGESTION,
+                    priority=InsightPriority.HIGH,
+                    title="Create Your Smart Budget",
+                    description=f"Based on ${suggestion.total_income:,.0f}/mo income and your spending patterns, we can create a budget that saves you ${suggestion.savings_amount:,.0f}/mo.",
+                    recommendations=[
+                        f"Target {suggestion.savings_target*100:.0f}% savings (${suggestion.savings_amount:,.0f}/mo)",
+                        f"Set ${suggestion.committed_total:,.0f} for committed expenses",
+                        f"Allocate ${suggestion.flexible_total:,.0f} for flexible spending",
+                        "Review and customize category limits"
+                    ],
+                    impact_score=0.9,
+                    confidence=suggestion.confidence,
+                    data_points={
+                        'income': suggestion.total_income,
+                        'savings': suggestion.savings_amount,
+                        'committed': suggestion.committed_total,
+                        'flexible': suggestion.flexible_total,
+                        'categories_count': len(suggestion.categories)
+                    },
+                    expires_at=date.today() + timedelta(days=7)
+                ))
+
+            # 3. Pace Warning Insights for active budgets
+            active_budgets = conn.execute("""
+                SELECT id, name FROM budget WHERE is_active = 1
+            """).fetchall()
+
+            for budget_row in active_budgets:
+                try:
+                    pace = budget_intelligence.calculate_budget_pace(budget_row[0])
+
+                    if pace.status in [budget_intelligence.PaceStatus.WILL_EXCEED,
+                                       budget_intelligence.PaceStatus.AT_RISK]:
+                        priority = (InsightPriority.URGENT if pace.status == budget_intelligence.PaceStatus.WILL_EXCEED
+                                   else InsightPriority.HIGH)
+
+                        insights.append(PersonalizedInsight(
+                            id=f"pace_warning_{budget_row[0]}_{date.today().isoformat()}",
+                            category=InsightCategory.BUDGET_PACE_WARNING,
+                            priority=priority,
+                            title=f"Budget Alert: {budget_row[1]}",
+                            description=pace.recommendation,
+                            recommendations=[
+                                f"${pace.amount_limit - pace.amount_spent:.0f} remaining for {pace.days_remaining} days",
+                                f"Try to spend ≤${(pace.amount_limit - pace.amount_spent) / max(1, pace.days_remaining):.0f}/day",
+                                "Review upcoming expenses and prioritize"
+                            ],
+                            impact_score=0.95 if pace.status == budget_intelligence.PaceStatus.WILL_EXCEED else 0.8,
+                            confidence=0.9,
+                            data_points={
+                                'budget_id': budget_row[0],
+                                'spent': pace.amount_spent,
+                                'limit': pace.amount_limit,
+                                'daily_rate': pace.daily_rate,
+                                'projected_total': pace.projected_total,
+                                'days_remaining': pace.days_remaining,
+                                'status': pace.status.value
+                            },
+                            expires_at=date.today() + timedelta(days=1)
+                        ))
+                except Exception:
+                    pass
+
+        except Exception as e:
+            # Don't fail if budget intelligence isn't available
+            pass
+
+        return insights
+
     def _identify_financial_strengths(
-        self, 
-        spending_health: int, 
-        savings_health: int, 
-        budgeting_health: int, 
+        self,
+        spending_health: int,
+        savings_health: int,
+        budgeting_health: int,
         trend_health: int
     ) -> List[str]:
         """Identify financial strengths"""
         strengths = []
-        
+
         if spending_health >= 80:
             strengths.append("Excellent spending control")
         if savings_health >= 80:

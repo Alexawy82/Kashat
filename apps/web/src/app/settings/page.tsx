@@ -15,7 +15,7 @@ import { Slider } from "@/components/ui/slider"
 import {
   Trash2, Download, Database, HardDrive, RefreshCw, AlertTriangle,
   Loader2, CheckCircle, Brain, Settings2, Sparkles, FileDown, Save, Zap, LayoutDashboard,
-  Pause, Play, X, RotateCcw, Activity
+  Pause, Play, X, RotateCcw, Activity, PiggyBank, DollarSign
 } from "lucide-react"
 import {
   useDataStats,
@@ -54,6 +54,15 @@ import {
   useUpdateQueueSettings
 } from "@/hooks/useAIQueue"
 import { Progress } from "@/components/ui/progress"
+import { PageHeader } from '@/components/ui/page-header'
+import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { toast } from "@/components/ui/Toaster"
+import {
+  useBudgetSettings,
+  useUpdateBudgetSettings,
+  useDetectIncome,
+  useIncome,
+} from "@/hooks/useBudgetIntelligence"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -63,9 +72,226 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
+function BudgetSettingsTab() {
+  const { data: budgetSettings, isLoading: budgetSettingsLoading } = useBudgetSettings()
+  const updateBudgetSettings = useUpdateBudgetSettings()
+  const { data: income, isLoading: incomeLoading } = useIncome()
+  const detectIncome = useDetectIncome()
+
+  const [localBudgetSettings, setLocalBudgetSettings] = useState({
+    include_irregular_income: false,
+    pace_warning_threshold: 0.8,
+    savings_goal_percent: 0.20,
+    auto_suggest_enabled: true,
+    suggestion_frequency: 'monthly' as 'weekly' | 'monthly' | 'on_demand',
+  })
+
+  useEffect(() => {
+    if (budgetSettings) {
+      setLocalBudgetSettings({
+        include_irregular_income: budgetSettings.include_irregular_income ?? false,
+        pace_warning_threshold: budgetSettings.pace_warning_threshold ?? 0.8,
+        savings_goal_percent: budgetSettings.savings_goal_percent ?? 0.20,
+        auto_suggest_enabled: budgetSettings.auto_suggest_enabled ?? true,
+        suggestion_frequency: budgetSettings.suggestion_frequency ?? 'monthly',
+      })
+    }
+  }, [budgetSettings])
+
+  const handleSaveBudgetSettings = (updates: Partial<typeof localBudgetSettings>) => {
+    const newSettings = { ...localBudgetSettings, ...updates }
+    setLocalBudgetSettings(newSettings)
+    updateBudgetSettings.mutate(newSettings)
+  }
+
+  const totalMonthlyIncome = income?.reduce((sum, src) => {
+    if (!src.is_active) return sum
+    switch (src.frequency) {
+      case 'weekly': return sum + src.avg_amount * 4.33
+      case 'biweekly': return sum + src.avg_amount * 2.17
+      case 'monthly': return sum + src.avg_amount
+      case 'irregular': return sum + src.avg_amount * 0.5
+      default: return sum + src.avg_amount
+    }
+  }, 0) || 0
+
+  if (budgetSettingsLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid gap-6 md:grid-cols-2">
+      {/* Budget Intelligence Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PiggyBank className="h-5 w-5" />
+            Budget Intelligence
+          </CardTitle>
+          <CardDescription>Configure smart budget suggestions and pace tracking</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Default Savings Goal ({(localBudgetSettings.savings_goal_percent * 100).toFixed(0)}%)</Label>
+            <Slider
+              value={[localBudgetSettings.savings_goal_percent * 100]}
+              onValueChange={([v]) => handleSaveBudgetSettings({ savings_goal_percent: v / 100 })}
+              min={5}
+              max={50}
+              step={5}
+            />
+            <p className="text-xs text-muted-foreground">
+              Target percentage of income to save when generating smart budgets
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Pace Warning Threshold ({(localBudgetSettings.pace_warning_threshold * 100).toFixed(0)}%)</Label>
+            <Slider
+              value={[localBudgetSettings.pace_warning_threshold * 100]}
+              onValueChange={([v]) => handleSaveBudgetSettings({ pace_warning_threshold: v / 100 })}
+              min={50}
+              max={95}
+              step={5}
+            />
+            <p className="text-xs text-muted-foreground">
+              Show warnings when spending pace exceeds this percentage of time elapsed
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Include Irregular Income</Label>
+              <p className="text-xs text-muted-foreground">
+                Factor in irregular income sources when calculating budgets
+              </p>
+            </div>
+            <Switch
+              checked={localBudgetSettings.include_irregular_income}
+              onCheckedChange={(v) => handleSaveBudgetSettings({ include_irregular_income: v })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Auto-Suggest Budgets</Label>
+              <p className="text-xs text-muted-foreground">
+                Automatically generate budget suggestions based on spending patterns
+              </p>
+            </div>
+            <Switch
+              checked={localBudgetSettings.auto_suggest_enabled}
+              onCheckedChange={(v) => handleSaveBudgetSettings({ auto_suggest_enabled: v })}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Suggestion Frequency</Label>
+            <Select
+              value={localBudgetSettings.suggestion_frequency}
+              onValueChange={(v: 'weekly' | 'monthly' | 'on_demand') =>
+                handleSaveBudgetSettings({ suggestion_frequency: v })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="weekly">Weekly</SelectItem>
+                <SelectItem value="monthly">Monthly</SelectItem>
+                <SelectItem value="on_demand">On Demand Only</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              How often to refresh budget suggestions
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Income Sources */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <DollarSign className="h-5 w-5" />
+            Detected Income
+          </CardTitle>
+          <CardDescription>
+            Income sources detected from your transactions
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {incomeLoading ? (
+            <div className="flex justify-center p-8">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+          ) : income && income.length > 0 ? (
+            <>
+              <div className="space-y-2">
+                {income.filter(s => s.is_active).map((source) => (
+                  <div
+                    key={source.id}
+                    className="flex items-center justify-between p-3 border rounded-lg"
+                  >
+                    <div>
+                      <div className="font-medium text-sm">{source.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {source.frequency} &bull; {(source.confidence * 100).toFixed(0)}% confidence
+                      </div>
+                    </div>
+                    <div className="text-green-600 font-medium">
+                      +${source.avg_amount.toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-green-800 font-medium">Est. Monthly Income</span>
+                  <span className="text-lg font-bold text-green-600">
+                    ${totalMonthlyIncome.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-8">
+              <DollarSign className="h-12 w-12 text-muted-foreground mx-auto mb-2 opacity-50" />
+              <p className="text-sm text-muted-foreground">No income sources detected yet.</p>
+              <p className="text-xs text-muted-foreground">
+                Click below to analyze your transactions for income patterns.
+              </p>
+            </div>
+          )}
+
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => detectIncome.mutate()}
+            disabled={detectIncome.isPending}
+          >
+            {detectIncome.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            {income && income.length > 0 ? 'Re-detect Income' : 'Detect Income'}
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const [confirmReset, setConfirmReset] = useState('')
   const [localSettings, setLocalSettings] = useState<Partial<AppSettings>>({})
+  const [openAiKeyInput, setOpenAiKeyInput] = useState('')
+  const [openAiKeySet, setOpenAiKeySet] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
   const { data: settings, isLoading: settingsLoading } = useAppSettings()
@@ -101,6 +327,7 @@ export default function SettingsPage() {
   const cancelJob = useCancelAIJob()
   const retryJob = useRetryAIJob()
   const updateQueueSettings = useUpdateQueueSettings()
+  const { confirm, ConfirmDialog } = useConfirm()
 
   // New categorization hooks (race-condition safe)
   const categorizeAll = useCategorizeAllTransactions()
@@ -111,6 +338,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings) {
       setLocalSettings(settings)
+      setOpenAiKeySet(Boolean(settings.ai_openai_api_key_set))
     }
   }, [settings])
 
@@ -120,9 +348,29 @@ export default function SettingsPage() {
   }
 
   const handleSaveSettings = () => {
-    saveSettings.mutate(localSettings, {
+    const payload: Partial<AppSettings> = { ...localSettings }
+    delete (payload as any).ai_openai_api_key_set
+    if (openAiKeyInput.trim()) {
+      payload.ai_openai_api_key = openAiKeyInput.trim()
+    } else {
+      delete (payload as any).ai_openai_api_key
+    }
+    saveSettings.mutate(payload, {
       onSuccess: () => {
         setHasChanges(false)
+        if (openAiKeyInput.trim()) {
+          setOpenAiKeyInput('')
+          setOpenAiKeySet(true)
+        }
+      }
+    })
+  }
+
+  const handleClearOpenAiKey = () => {
+    saveSettings.mutate({ ai_openai_api_key: '' }, {
+      onSuccess: () => {
+        setOpenAiKeyInput('')
+        setOpenAiKeySet(false)
       }
     })
   }
@@ -131,8 +379,14 @@ export default function SettingsPage() {
     saveAISettings.mutate(updates)
   }
 
-  const handleDeleteMemory = (pattern: string) => {
-    if (confirm(`Remove learned mapping for "${pattern}"?`)) {
+  const handleDeleteMemory = async (pattern: string) => {
+    const confirmed = await confirm({
+      title: 'Remove Mapping',
+      description: `Remove learned mapping for "${pattern}"?`,
+      confirmLabel: 'Remove',
+      variant: 'destructive',
+    })
+    if (confirmed) {
       deleteMerchantMemory.mutate(pattern)
     }
   }
@@ -140,7 +394,7 @@ export default function SettingsPage() {
   const handleBackup = () => {
     createBackup.mutate(undefined, {
       onSuccess: (data) => {
-        alert(`Backup created: ${data?.backup_file}`)
+        toast.success(`Backup created: ${data?.backup_file}`)
       }
     })
   }
@@ -148,26 +402,32 @@ export default function SettingsPage() {
   const handleOptimize = () => {
     optimizeDb.mutate(undefined, {
       onSuccess: () => {
-        alert('Database optimized successfully!')
+        toast.success('Database optimized successfully!')
       }
     })
   }
 
-  const handleResetAI = () => {
-    if (confirm('Reset all AI fields on transactions? This will clear AI-generated merchant names and category suggestions.')) {
+  const handleResetAI = async () => {
+    const confirmed = await confirm({
+      title: 'Reset AI Fields',
+      description: 'Reset all AI fields on transactions? This will clear AI-generated merchant names and category suggestions.',
+      confirmLabel: 'Reset',
+      variant: 'destructive',
+    })
+    if (confirmed) {
       resetAI.mutate()
     }
   }
 
   const handleFactoryReset = () => {
     if (confirmReset !== 'FACTORY RESET') {
-      alert('Type "FACTORY RESET" to confirm')
+      toast.error('Type "FACTORY RESET" to confirm')
       return
     }
     factoryReset.mutate(undefined, {
       onSuccess: () => {
         setConfirmReset('')
-        alert('Factory reset complete. Database has been wiped.')
+        toast.success('Factory reset complete. Database has been wiped.')
       }
     })
   }
@@ -186,6 +446,18 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Settings"
+        description="Configure your Kashat experience"
+        helpItems={[
+          "General: Transaction defaults, recurring detection, and display preferences",
+          "AI & Intelligence: Configure AI provider, auto-categorization, and merchant memory",
+          "Budget: Set savings goals, pace warnings, and income detection settings",
+          "Dashboard: Customize time periods and enable/disable features",
+          "Data Management: Export, backup, optimize, or reset your database"
+        ]}
+      />
+
       {/* Save button for pending changes */}
       {hasChanges && (
         <div className="flex justify-end">
@@ -204,6 +476,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="ai">AI & Intelligence</TabsTrigger>
+          <TabsTrigger value="budget">Budget</TabsTrigger>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="data">Data Management</TabsTrigger>
         </TabsList>
@@ -225,14 +498,14 @@ export default function SettingsPage() {
                   <div className="space-y-2">
                     <Label>Default Sort By</Label>
                     <Select
-                      value={localSettings.tx_default_sort_by || 'date'}
+                      value={localSettings.tx_default_sort_by || 'posted_at'}
                       onValueChange={(v) => updateSetting('tx_default_sort_by', v)}
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="date">Date</SelectItem>
+                        <SelectItem value="posted_at">Date</SelectItem>
                         <SelectItem value="amount">Amount</SelectItem>
                         <SelectItem value="description">Description</SelectItem>
                         <SelectItem value="category">Category</SelectItem>
@@ -262,7 +535,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted-foreground">Show internal transfers by default</p>
                   </div>
                   <Switch
-                    checked={localSettings.tx_include_transfers_default ?? true}
+                    checked={localSettings.tx_include_transfers_default ?? false}
                     onCheckedChange={(v) => updateSetting('tx_include_transfers_default', v)}
                   />
                 </div>
@@ -954,13 +1227,24 @@ export default function SettingsPage() {
                       <Label>API Key</Label>
                       <Input
                         type="password"
-                        value={localSettings.ai_openai_api_key || ''}
-                        onChange={(e) => updateSetting('ai_openai_api_key', e.target.value)}
+                        value={openAiKeyInput}
+                        onChange={(e) => {
+                          setOpenAiKeyInput(e.target.value)
+                          setHasChanges(true)
+                        }}
                         placeholder="sk-..."
                       />
                       <p className="text-xs text-muted-foreground">
                         OpenAI API key (or compatible service)
                       </p>
+                      {openAiKeySet ? (
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>API key is set</span>
+                          <Button type="button" variant="ghost" size="sm" onClick={handleClearOpenAiKey}>
+                            Clear
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="space-y-2">
                       <Label>Base URL (Optional)</Label>
@@ -1252,6 +1536,11 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
 
+        {/* BUDGET TAB */}
+        <TabsContent value="budget">
+          <BudgetSettingsTab />
+        </TabsContent>
+
         {/* DASHBOARD TAB */}
         <TabsContent value="dashboard">
           <div className="grid gap-6 md:grid-cols-2">
@@ -1498,6 +1787,7 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
       </Tabs>
+      <ConfirmDialog />
     </div>
   )
 }

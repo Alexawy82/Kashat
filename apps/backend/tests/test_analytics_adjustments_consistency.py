@@ -9,7 +9,7 @@ def test_monthly_and_summary_exclude_adjustments(db_conn, seed_transactions):
             {"id": "s3", "account_id": "acc1", "posted_at": date(2024, 1, 3), "amount": 5.0, "currency": "USD", "description_norm": "cashback"},
         ]
     )
-    db_conn.execute("UPDATE transaction SET is_adjustment = TRUE WHERE id = ?", ["s3"])
+    db_conn.execute('UPDATE "transaction" SET is_adjustment = TRUE WHERE id = ?', ["s3"])
 
     from kashat.api.routes import analytics as analytics_routes
 

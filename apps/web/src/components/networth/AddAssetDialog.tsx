@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -19,9 +19,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Home, Car, Coins, TrendingUp, Briefcase, Package } from 'lucide-react'
-import { useCreateAsset, AssetCreate, METAL_TYPES, PROPERTY_TYPES, INVESTMENT_ACCOUNT_TYPES } from '@/hooks/useNetWorth'
+import { Plus, Home, Car, Coins, TrendingUp, Briefcase, Package, Search, Loader2, CheckCircle2, AlertCircle, CreditCard } from 'lucide-react'
+import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete'
+import { useCreateAsset, useUpdateAsset, useCreateLiability, Asset, AssetCreate, LiabilityCreate, METAL_TYPES, PROPERTY_TYPES, INVESTMENT_ACCOUNT_TYPES, useDecodeVin, useStockPrice } from '@/hooks/useNetWorth'
 import { cn } from '@/lib/utils'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Switch } from '@/components/ui/switch'
 
 const ASSET_TYPES = [
   { value: 'real_estate', label: 'Real Estate', icon: Home },
@@ -35,55 +38,192 @@ const ASSET_TYPES = [
 interface AddAssetDialogProps {
   trigger?: React.ReactNode
   onSuccess?: () => void
+  editAsset?: Asset | null
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
-export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
-  const [open, setOpen] = useState(false)
+export function AddAssetDialog({ trigger, onSuccess, editAsset, open: controlledOpen, onOpenChange }: AddAssetDialogProps) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen !== undefined ? controlledOpen : internalOpen
+  const setOpen = onOpenChange || setInternalOpen
+
+  const isEditMode = !!editAsset
   const [assetType, setAssetType] = useState<AssetCreate['asset_type']>('other')
+  const [stockTicker, setStockTicker] = useState('')
+  const [vinDecoded, setVinDecoded] = useState(false)
+  const [stockLookedUp, setStockLookedUp] = useState(false)
   const createAsset = useCreateAsset()
+  const updateAsset = useUpdateAsset()
+  const createLiability = useCreateLiability()
+  const decodeVin = useDecodeVin()
+  const { data: stockData, isLoading: stockLoading, refetch: fetchStock } = useStockPrice(stockTicker)
 
   const [formData, setFormData] = useState<Partial<AssetCreate>>({
     name: '',
     current_value: 0,
   })
 
+  // For creating liability alongside asset (mortgage/auto loan)
+  const [hasLoan, setHasLoan] = useState(false)
+  const [loanBalance, setLoanBalance] = useState<number | undefined>(undefined)
+  const [loanName, setLoanName] = useState('')
+  const [interestRate, setInterestRate] = useState<number | undefined>(undefined)
+  const [monthlyPayment, setMonthlyPayment] = useState<number | undefined>(undefined)
+
+  // Populate form when editing
+  useEffect(() => {
+    if (editAsset) {
+      const details = typeof editAsset.details === 'string'
+        ? JSON.parse(editAsset.details || '{}')
+        : (editAsset.details || {})
+
+      setAssetType(editAsset.asset_type)
+      setFormData({
+        name: editAsset.name,
+        current_value: editAsset.current_value,
+        purchase_price: editAsset.purchase_price,
+        purchase_date: editAsset.purchase_date,
+        notes: editAsset.notes,
+        // Type-specific from details
+        weight_oz: details.weight_oz || editAsset.weight_oz,
+        metal_type: details.metal_type || editAsset.metal_type,
+        premium_paid: details.premium_paid || editAsset.premium_paid,
+        address: details.address || editAsset.address,
+        property_type: details.property_type || editAsset.property_type,
+        year: details.year || editAsset.year,
+        make: details.make || editAsset.make,
+        model: details.model || editAsset.model,
+        vin: details.vin || editAsset.vin,
+        institution: details.institution || editAsset.institution,
+        account_type: details.account_type || editAsset.account_type,
+        ticker: details.ticker,
+        shares: details.shares,
+        cost_basis: details.cost_basis,
+        valuation_method: details.valuation_method || editAsset.valuation_method,
+        monthly_revenue: details.monthly_revenue || editAsset.monthly_revenue,
+        multiplier: details.multiplier || editAsset.multiplier,
+      })
+      if (details.ticker) setStockTicker(details.ticker)
+    }
+  }, [editAsset])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     try {
-      await createAsset.mutateAsync({
-        ...formData,
-        asset_type: assetType,
-        name: formData.name || '',
-        current_value: formData.current_value || 0,
-      } as AssetCreate)
+      if (isEditMode && editAsset) {
+        await updateAsset.mutateAsync({
+          id: editAsset.id,
+          ...formData,
+          asset_type: assetType,
+          name: formData.name || '',
+          current_value: formData.current_value || 0,
+        } as Partial<Asset> & { id: string })
+      } else {
+        // Create the asset first
+        const newAsset = await createAsset.mutateAsync({
+          ...formData,
+          asset_type: assetType,
+          name: formData.name || '',
+          current_value: formData.current_value || 0,
+        } as AssetCreate)
+
+        // For real_estate/vehicle: create liability if user has a loan
+        if ((assetType === 'real_estate' || assetType === 'vehicle') && hasLoan && loanBalance && loanBalance > 0 && newAsset?.id) {
+          const liabilityType = assetType === 'real_estate' ? 'mortgage' : 'auto_loan'
+          const defaultLoanName = assetType === 'real_estate'
+            ? `Mortgage - ${formData.name || 'Property'}`
+            : `Auto Loan - ${formData.name || 'Vehicle'}`
+
+          await createLiability.mutateAsync({
+            name: loanName || defaultLoanName,
+            liability_type: liabilityType,
+            current_balance: loanBalance,
+            original_amount: loanBalance,
+            interest_rate: interestRate,
+            monthly_payment: monthlyPayment,
+            linked_asset_id: newAsset.id,
+          } as LiabilityCreate)
+        }
+      }
 
       setOpen(false)
-      setFormData({ name: '', current_value: 0 })
-      setAssetType('other')
+      if (!isEditMode) {
+        setFormData({ name: '', current_value: 0 })
+        setAssetType('other')
+        setStockTicker('')
+        setVinDecoded(false)
+        setStockLookedUp(false)
+        setHasLoan(false)
+        setLoanBalance(undefined)
+        setLoanName('')
+        setInterestRate(undefined)
+        setMonthlyPayment(undefined)
+      }
       onSuccess?.()
     } catch (error) {
-      console.error('Failed to create asset:', error)
+      console.error('Failed to save asset:', error)
     }
   }
+
+  const isLoading = createAsset.isPending || updateAsset.isPending || createLiability.isPending
 
   const updateField = (field: keyof AssetCreate, value: unknown) => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
+  // Handle VIN decode
+  const handleDecodeVin = async () => {
+    const vin = formData.vin
+    if (!vin || vin.length < 11) return
+
+    try {
+      const result = await decodeVin.mutateAsync(vin)
+      if (result) {
+        setFormData(prev => ({
+          ...prev,
+          year: typeof result.year === 'string' ? parseInt(result.year) : (result.year || prev.year),
+          make: result.make || prev.make,
+          model: result.model || prev.model,
+        }))
+        setVinDecoded(true)
+      }
+    } catch (error) {
+      console.error('VIN decode failed:', error)
+    }
+  }
+
+  // Handle stock lookup - use effect to apply data when it loads
+  const handleStockLookup = async () => {
+    if (!stockTicker) return
+    const result = await fetchStock()
+    if (result.data) {
+      setFormData(prev => ({
+        ...prev,
+        ticker: stockTicker.toUpperCase(),
+        current_value: result.data.price || prev.current_value,
+        name: prev.name || result.data.name || stockTicker.toUpperCase(),
+      }))
+      setStockLookedUp(true)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {trigger || (
-          <Button>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Asset
-          </Button>
-        )}
-      </DialogTrigger>
+      {!isEditMode && (
+        <DialogTrigger asChild>
+          {trigger || (
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Asset
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Add New Asset</DialogTitle>
+          <DialogTitle>{isEditMode ? 'Edit Asset' : 'Add New Asset'}</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -163,7 +303,7 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
                 <div>
                   <Label htmlFor="metal_type">Metal Type</Label>
                   <Select
-                    value={formData.metal_type || ''}
+                    value={formData.metal_type || undefined}
                     onValueChange={v => updateField('metal_type', v)}
                   >
                     <SelectTrigger>
@@ -208,17 +348,30 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
               <h4 className="font-medium text-sm">Property Details</h4>
               <div>
                 <Label htmlFor="address">Address</Label>
-                <Input
-                  id="address"
+                <AddressAutocomplete
                   value={formData.address || ''}
-                  onChange={e => updateField('address', e.target.value)}
-                  placeholder="Full address"
+                  onChange={(value, details) => {
+                    updateField('address', value)
+                    // Store full address details for enrichment
+                    if (details) {
+                      setFormData(prev => ({
+                        ...prev,
+                        address: value,
+                        city: details.city,
+                        state: details.state,
+                        postcode: details.postcode,
+                        lat: details.lat,
+                        lon: details.lon,
+                      }))
+                    }
+                  }}
+                  placeholder="Start typing an address..."
                 />
               </div>
               <div>
                 <Label htmlFor="property_type">Property Type</Label>
                 <Select
-                  value={formData.property_type || ''}
+                  value={formData.property_type || undefined}
                   onValueChange={v => updateField('property_type', v)}
                 >
                   <SelectTrigger>
@@ -239,6 +392,42 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
           {assetType === 'vehicle' && (
             <div className="space-y-3 p-3 bg-muted/50 rounded-lg">
               <h4 className="font-medium text-sm">Vehicle Details</h4>
+              {/* VIN with Decode Button */}
+              <div>
+                <Label htmlFor="vin">VIN (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="vin"
+                    value={formData.vin || ''}
+                    onChange={e => {
+                      updateField('vin', e.target.value.toUpperCase())
+                      setVinDecoded(false)
+                    }}
+                    placeholder="Enter VIN to auto-fill details"
+                    maxLength={17}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDecodeVin}
+                    disabled={!formData.vin || formData.vin.length < 11 || decodeVin.isPending}
+                    className="shrink-0"
+                  >
+                    {decodeVin.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : vinDecoded ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Search className="h-4 w-4" />
+                    )}
+                    <span className="ml-1">Decode</span>
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Enter VIN to auto-fill year, make, and model
+                </p>
+              </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <Label htmlFor="year">Year</Label>
@@ -268,21 +457,132 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
                   />
                 </div>
               </div>
-              <div>
-                <Label htmlFor="vin">VIN</Label>
-                <Input
-                  id="vin"
-                  value={formData.vin || ''}
-                  onChange={e => updateField('vin', e.target.value)}
-                  placeholder="Vehicle Identification Number"
+            </div>
+          )}
+
+          {/* Loan Section for Real Estate and Vehicles */}
+          {!isEditMode && (assetType === 'real_estate' || assetType === 'vehicle') && (
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-2">
+                  <CreditCard className="h-5 w-5 text-amber-600 mt-0.5" />
+                  <div>
+                    <h4 className="font-medium text-sm text-amber-900 dark:text-amber-100">
+                      {assetType === 'real_estate' ? 'Mortgage' : 'Auto Loan'}
+                    </h4>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      Do you have a loan on this {assetType === 'real_estate' ? 'property' : 'vehicle'}?
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={hasLoan}
+                  onCheckedChange={setHasLoan}
                 />
               </div>
+
+              {hasLoan && (
+                <div className="space-y-3 pt-2 border-t border-amber-200 dark:border-amber-700">
+                  <div>
+                    <Label htmlFor="loan_name">Loan Name</Label>
+                    <Input
+                      id="loan_name"
+                      value={loanName}
+                      onChange={e => setLoanName(e.target.value)}
+                      placeholder={assetType === 'real_estate' ? 'e.g., Chase Mortgage' : 'e.g., Toyota Financial'}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="loan_balance">Current Balance ($)</Label>
+                      <Input
+                        id="loan_balance"
+                        type="number"
+                        step="0.01"
+                        value={loanBalance || ''}
+                        onChange={e => setLoanBalance(parseFloat(e.target.value) || undefined)}
+                        placeholder="Amount owed"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="interest_rate">Interest Rate (%)</Label>
+                      <Input
+                        id="interest_rate"
+                        type="number"
+                        step="0.01"
+                        value={interestRate || ''}
+                        onChange={e => setInterestRate(parseFloat(e.target.value) || undefined)}
+                        placeholder="e.g., 6.5"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="monthly_payment">Monthly Payment ($)</Label>
+                    <Input
+                      id="monthly_payment"
+                      type="number"
+                      step="0.01"
+                      value={monthlyPayment || ''}
+                      onChange={e => setMonthlyPayment(parseFloat(e.target.value) || undefined)}
+                      placeholder="Monthly payment amount"
+                    />
+                  </div>
+
+                  {loanBalance && loanBalance > 0 && formData.current_value && formData.current_value > 0 && (
+                    <Alert className="bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800">
+                      <AlertCircle className="h-4 w-4 text-green-600" />
+                      <AlertDescription className="text-green-800 dark:text-green-200">
+                        <strong>Equity:</strong> ${(formData.current_value - loanBalance).toLocaleString()}
+                        ({((formData.current_value - loanBalance) / formData.current_value * 100).toFixed(1)}% of value)
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {assetType === 'investment' && (
             <div className="space-y-3 p-3 bg-muted/50 rounded-lg">
               <h4 className="font-medium text-sm">Investment Details</h4>
+              {/* Stock Ticker Lookup */}
+              <div>
+                <Label htmlFor="ticker">Stock Ticker (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="ticker"
+                    value={stockTicker}
+                    onChange={e => {
+                      setStockTicker(e.target.value.toUpperCase())
+                      setStockLookedUp(false)
+                    }}
+                    placeholder="AAPL, MSFT, TSLA..."
+                    maxLength={10}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleStockLookup}
+                    disabled={!stockTicker || stockLoading}
+                    className="shrink-0"
+                  >
+                    {stockLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : stockLookedUp ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Search className="h-4 w-4" />
+                    )}
+                    <span className="ml-1">Lookup</span>
+                  </Button>
+                </div>
+                {stockData && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {stockData.name}: ${stockData.price?.toFixed(2)} ({stockData.change_percent?.toFixed(2)}%)
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label htmlFor="institution">Institution</Label>
@@ -296,7 +596,7 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
                 <div>
                   <Label htmlFor="account_type">Account Type</Label>
                   <Select
-                    value={formData.account_type || ''}
+                    value={formData.account_type || undefined}
                     onValueChange={v => updateField('account_type', v)}
                   >
                     <SelectTrigger>
@@ -312,6 +612,30 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
                   </Select>
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="shares">Number of Shares</Label>
+                  <Input
+                    id="shares"
+                    type="number"
+                    step="0.0001"
+                    value={formData.shares || ''}
+                    onChange={e => updateField('shares', parseFloat(e.target.value) || undefined)}
+                    placeholder="100"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cost_basis">Cost Basis ($)</Label>
+                  <Input
+                    id="cost_basis"
+                    type="number"
+                    step="0.01"
+                    value={formData.cost_basis || ''}
+                    onChange={e => updateField('cost_basis', parseFloat(e.target.value) || undefined)}
+                    placeholder="Total cost"
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -321,7 +645,7 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
               <div>
                 <Label htmlFor="valuation_method">Valuation Method</Label>
                 <Select
-                  value={formData.valuation_method || ''}
+                  value={formData.valuation_method || undefined}
                   onValueChange={v => updateField('valuation_method', v)}
                 >
                   <SelectTrigger>
@@ -378,8 +702,8 @@ export function AddAssetDialog({ trigger, onSuccess }: AddAssetDialogProps) {
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createAsset.isPending}>
-              {createAsset.isPending ? 'Adding...' : 'Add Asset'}
+            <Button type="submit" disabled={isLoading}>
+              {isLoading ? (isEditMode ? 'Saving...' : 'Adding...') : (isEditMode ? 'Save Changes' : 'Add Asset')}
             </Button>
           </div>
         </form>

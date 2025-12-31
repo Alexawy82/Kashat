@@ -5,11 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import {
   Upload, FileText, FileSpreadsheet, Trash2, RefreshCw,
   CheckCircle, XCircle, Clock, Loader2, FolderOpen, AlertTriangle
 } from 'lucide-react'
 import { useImportRuns, useBulkUpload, useDeleteImportRun, useReprocessImportRun } from '@/hooks/useImports'
+import { PageHeader } from '@/components/ui/page-header'
 
 const statusConfig = {
   empty: { icon: Clock, color: 'text-gray-500', bg: 'bg-gray-100', label: 'Empty' },
@@ -23,6 +25,7 @@ export default function ImportPage() {
   const [dragActive, setDragActive] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const { confirm, ConfirmDialog } = useConfirm()
 
   const { data: runsData, isLoading: runsLoading, refetch: refetchRuns } = useImportRuns()
   const bulkUpload = useBulkUpload()
@@ -83,9 +86,13 @@ export default function ImportPage() {
   }
 
   const handleDelete = async (runId: string) => {
-    if (!confirm('Are you sure you want to delete this import run? This will also delete all imported transactions.')) {
-      return
-    }
+    const confirmed = await confirm({
+      title: 'Delete Import Run',
+      description: 'Are you sure you want to delete this import run? This will also delete all imported transactions.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    })
+    if (!confirmed) return
     try {
       await deleteRun.mutateAsync(runId)
     } catch (error) {
@@ -107,13 +114,17 @@ export default function ImportPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Import Data</h1>
-        <p className="text-muted-foreground">
-          Upload bank statements (CSV or PDF) to import transactions.
-        </p>
-      </div>
+      <PageHeader
+        title="Import Data"
+        description="Upload bank statements (CSV or PDF) to import transactions."
+        helpItems={[
+          "Drag and drop CSV or PDF bank statements to upload",
+          "PDF statements are parsed using AI vision for accuracy",
+          "Duplicate transactions are automatically detected and skipped",
+          "After import, transactions are auto-categorized using AI",
+          "Use 'Reprocess' to re-run categorization on existing imports"
+        ]}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Upload Area */}
@@ -302,6 +313,7 @@ export default function ImportPage() {
           </CardContent>
         </Card>
       </div>
+      <ConfirmDialog />
     </div>
   )
 }

@@ -56,9 +56,9 @@ export function CommandPalette() {
             <span>Settings</span>
             <CommandShortcut>⌘S</CommandShortcut>
           </CommandItem>
-          <CommandItem onSelect={() => { setOpen(false); router.push('/pulse') }}>
+          <CommandItem onSelect={() => { setOpen(false); router.push('/settings/system') }}>
             <Activity className="mr-2 h-4 w-4" />
-            <span>Pulse</span>
+            <span>System Health</span>
           </CommandItem>
         </CommandGroup>
       </CommandList>

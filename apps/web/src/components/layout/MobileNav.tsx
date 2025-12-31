@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import {
   Menu, X, LayoutDashboard, CreditCard, Calendar, PiggyBank,
-  TrendingUp, Upload, Settings, Repeat, ArrowRightLeft, BarChart3
+  Upload, Settings, Repeat, ArrowRightLeft, Wallet
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -12,6 +12,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/networth", label: "Net Worth", icon: Wallet },
   { href: "/transactions", label: "Transactions", icon: CreditCard },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/bills", label: "Bills", icon: Calendar },

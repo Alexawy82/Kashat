@@ -1,9 +1,12 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { RowSelectionState } from "@tanstack/react-table"
 import { DataTable } from "./data-table"
 import { columns } from "./columns"
-import { useTransactions, useTransactionStats } from "@/hooks/useTransactions"
+import { useTransactions, useFilterStats, useCreateTransaction } from "@/hooks/useTransactions"
+import { AddTransactionDialog } from "@/components/transactions/AddTransactionDialog"
+import { BulkActionsToolbar } from "@/components/transactions/BulkActionsToolbar"
 import { useCategories, useCategorizeAllTransactions, useCategorizationStatus, useCategoryCoverage } from "@/hooks/useCategories"
 import { useAccounts } from "@/hooks/useAccounts"
 import { Input } from "@/components/ui/input"
@@ -31,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { PageHeader } from "@/components/ui/page-header"
 
 type FilterType = 'all' | 'uncategorized' | 'business' | 'income'
 
@@ -75,6 +79,7 @@ export default function TransactionsPage() {
   const [accountFilter, setAccountFilter] = useState<string | null>(null)
   const [startDate, setStartDate] = useState<string>("")
   const [endDate, setEndDate] = useState<string>("")
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 
   useEffect(() => {
     try {
@@ -107,10 +112,7 @@ export default function TransactionsPage() {
   const { data, isLoading, isError, isFetching } = useTransactions(filter)
   const { data: categories } = useCategories()
   const { data: accounts } = useAccounts()
-
-  const { data: uncategorizedStats } = useTransactionStats({ uncategorized: true })
-  const { data: businessStats } = useTransactionStats({ isBusiness: true })
-  const { data: incomeStats } = useTransactionStats({ isIncome: true })
+  const { data: filterStats } = useFilterStats()
 
   const categorizeAll = useCategorizeAllTransactions()
   const { data: categorizationStatus } = useCategorizationStatus()
@@ -155,35 +157,81 @@ export default function TransactionsPage() {
 
   const hasActiveFilters = activeFilter !== 'all' || categoryFilter !== null || accountFilter !== null || search !== '' || startDate !== '' || endDate !== ''
   const totalPages = data?.total_pages || 1
-  const uncategorizedCount = uncategorizedStats?.total || 0
+  const uncategorizedCount = filterStats?.uncategorized || 0
+
+  // Clear selection when page or filters change
+  useEffect(() => {
+    setRowSelection({})
+  }, [page, pageSize, activeFilter, categoryFilter, accountFilter, startDate, endDate, debouncedSearch])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      // Escape - clear selection
+      if (e.key === 'Escape') {
+        setRowSelection({})
+        return
+      }
+
+      // Ctrl/Cmd + A - select all on current page
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault()
+        if (data?.items) {
+          const newSelection: RowSelectionState = {}
+          data.items.forEach((_, index) => {
+            newSelection[index] = true
+          })
+          setRowSelection(newSelection)
+        }
+        return
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [data?.items])
+
+  // Get selected transaction IDs and data
+  const selectedIds = useMemo(() => {
+    if (!data?.items) return []
+    return Object.keys(rowSelection)
+      .filter(key => rowSelection[key])
+      .map(index => data.items[parseInt(index)]?.id)
+      .filter(Boolean)
+  }, [rowSelection, data?.items])
+
+  const selectedTransactions = useMemo(() => {
+    if (!data?.items) return []
+    return Object.keys(rowSelection)
+      .filter(key => rowSelection[key])
+      .map(index => data.items[parseInt(index)])
+      .filter(Boolean)
+  }, [rowSelection, data?.items])
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Transactions</h1>
-          <div className="flex items-center gap-4 mt-1">
-            {data?.total !== undefined && (
-              <span className="text-sm text-muted-foreground">
-                {data.total.toLocaleString()} transactions
-              </span>
-            )}
-            {coverage && (
-              <div className="flex items-center gap-1.5">
-                <div className="h-2 w-24 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-green-500 rounded-full transition-all"
-                    style={{ width: `${coverage.coverage_percent || 0}%` }}
-                  />
-                </div>
-                <span className="text-sm text-muted-foreground">
-                  {coverage.coverage_percent?.toFixed(0)}% categorized
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+      <PageHeader
+        title="Transactions"
+        description={`${data?.total?.toLocaleString() || 0} transactions${coverage ? ` • ${coverage.coverage_percent?.toFixed(0)}% categorized` : ''}`}
+        helpItems={[
+          "Click any transaction to see details or edit its category",
+          "Use filters to find specific transactions by type, category, or date",
+          "Change categories by clicking the category badge on each row",
+          "Mark transactions as income or business with the action menu",
+          "Select multiple rows with checkboxes for bulk actions",
+          "Keyboard: Ctrl+A to select all, Escape to clear selection",
+          "AI categorization learns from your corrections over time",
+        ]}
+      />
+
+      {/* Stats and Actions Bar */}
+      <div className="flex items-center justify-between">
 
         {/* AI Action - Show categorization button or progress */}
         {isCategorizationRunning ? (
@@ -236,6 +284,7 @@ export default function TransactionsPage() {
             </Badge>
           </Button>
         ) : null}
+        <AddTransactionDialog />
       </div>
 
       {/* Action Result Toast */}
@@ -363,9 +412,9 @@ export default function TransactionsPage() {
           >
             <TrendingUp className="h-3.5 w-3.5" />
             Income
-            {(incomeStats?.total || 0) > 0 && (
+            {(filterStats?.income || 0) > 0 && (
               <Badge variant={activeFilter === 'income' ? 'secondary' : 'outline'} className="text-[10px] px-1.5 h-5">
-                {incomeStats?.total}
+                {filterStats?.income}
               </Badge>
             )}
           </Button>
@@ -378,9 +427,9 @@ export default function TransactionsPage() {
           >
             <Briefcase className="h-3.5 w-3.5" />
             Business
-            {(businessStats?.total || 0) > 0 && (
+            {(filterStats?.business || 0) > 0 && (
               <Badge variant={activeFilter === 'business' ? 'secondary' : 'outline'} className="text-[10px] px-1.5 h-5">
-                {businessStats?.total}
+                {filterStats?.business}
               </Badge>
             )}
           </Button>
@@ -433,7 +482,19 @@ export default function TransactionsPage() {
         </div>
       ) : (
         <>
-          <DataTable columns={columns} data={data?.items || []} />
+          {/* Bulk Actions Toolbar - shows when rows are selected */}
+          <BulkActionsToolbar
+            selectedIds={selectedIds}
+            selectedTransactions={selectedTransactions}
+            onClearSelection={() => setRowSelection({})}
+          />
+
+          <DataTable
+            columns={columns}
+            data={data?.items || []}
+            rowSelection={rowSelection}
+            onRowSelectionChange={setRowSelection}
+          />
 
           {/* Pagination */}
           <div className="flex items-center justify-between py-2">

@@ -30,7 +30,7 @@ class TestTransfersV2Labels(unittest.TestCase):
             conn.execute("INSERT OR IGNORE INTO account (id, name, type, currency) VALUES (?, ?, ?, ?)", [acc['id'], acc['name'], acc['type'], acc['currency']])
         for t in data['transactions']:
             conn.execute(
-                "INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                'INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
                 [t['id'], t['account_id'], datetime.fromisoformat(t['date']), float(t['amount']), 'USD', t['desc'].lower(), None, t['id'], None]
             )
 

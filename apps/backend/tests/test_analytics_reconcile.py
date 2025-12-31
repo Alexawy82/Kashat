@@ -46,7 +46,7 @@ class TestAnalyticsReconcile(unittest.TestCase):
         # Insert rows as transactions (include transfers for reconciliation)
         for r in res.rows:
             conn.execute(
-                "INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                'INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
                 [
                     os.urandom(16).hex(),
                     "acc1",
@@ -61,8 +61,8 @@ class TestAnalyticsReconcile(unittest.TestCase):
             )
 
         # Compute sums from DB (include transfers/adjustments)
-        income = conn.execute("SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) FROM transaction").fetchone()[0]
-        debits = conn.execute("SELECT COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) FROM transaction").fetchone()[0]
+        income = conn.execute('SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) FROM "transaction"').fetchone()[0]
+        debits = conn.execute('SELECT COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) FROM "transaction"').fetchone()[0]
 
         # Parse summary totals from page 1
         import pdfplumber

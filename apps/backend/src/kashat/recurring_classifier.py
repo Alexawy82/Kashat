@@ -193,27 +193,40 @@ LOAN_PATTERNS: Dict[str, Tuple[str, str, bool, float]] = {
 
     # -------------------------------------------------------------------------
     # CREDIT CARD PAYMENTS (Essential - avoid interest)
+    # Patterns match both explicit card references AND ACH-style "issuer + name + co"
     # -------------------------------------------------------------------------
+    # Chase - match card/pymt/bank OR ACH pattern (name + co), exclude auto/home/mort loans
     r"chase\s*(card|pymt|payment|bank)(?!\s*auto)(?!\s*home)(?!\s*mort)": (LoanSubcategory.CREDIT_CARD.value, "Chase Card", True, 0.90),
+    r"chase\s+\w+\s+co\b(?!.*(?:auto|home|mort))": (LoanSubcategory.CREDIT_CARD.value, "Chase Card", True, 0.85),
+    # Amex - broad match
     r"amex|american\s*express": (LoanSubcategory.CREDIT_CARD.value, "American Express", True, 0.95),
+    # Capital One - exclude auto loans
     r"capital\s*one(?!\s*auto)": (LoanSubcategory.CREDIT_CARD.value, "Capital One", True, 0.90),
-    r"citi\s*(card|bank|pymt)": (LoanSubcategory.CREDIT_CARD.value, "Citi Card", True, 0.90),
-    r"discover\s*(card|financial|bank)?": (LoanSubcategory.CREDIT_CARD.value, "Discover", True, 0.90),
-    r"wells\s*fargo\s*card": (LoanSubcategory.CREDIT_CARD.value, "Wells Fargo Card", True, 0.95),
+    # Citi - match card/bank/pymt OR ACH pattern, exclude mortgage/group
+    r"citi\s*(card|bank|pymt|payment)": (LoanSubcategory.CREDIT_CARD.value, "Citi Card", True, 0.90),
+    r"citi\s+\w+\s+co\b(?!.*(?:group|mortgage|realty))": (LoanSubcategory.CREDIT_CARD.value, "Citi Card", True, 0.85),
+    # Discover
+    r"discover\s*(card|financial|bank)?(?!\s*student)": (LoanSubcategory.CREDIT_CARD.value, "Discover", True, 0.90),
+    # Wells Fargo
+    r"wells\s*fargo\s*(card|pymt|\w+\s+co)": (LoanSubcategory.CREDIT_CARD.value, "Wells Fargo Card", True, 0.90),
+    # Bank of America
     r"bank\s*of\s*america\s*(card|pymt)": (LoanSubcategory.CREDIT_CARD.value, "Bank of America Card", True, 0.95),
-    r"usaa\s*card": (LoanSubcategory.CREDIT_CARD.value, "USAA Card", True, 0.95),
-    r"navy\s*federal\s*card": (LoanSubcategory.CREDIT_CARD.value, "Navy Federal Card", True, 0.95),
+    r"bofa\s*(card|pymt|\w+\s+co)": (LoanSubcategory.CREDIT_CARD.value, "Bank of America Card", True, 0.90),
+    # Credit unions and other issuers
+    r"usaa\s*(card|pymt|\w+\s+co)": (LoanSubcategory.CREDIT_CARD.value, "USAA Card", True, 0.90),
+    r"navy\s*federal\s*(card|pymt|\w+\s+co)": (LoanSubcategory.CREDIT_CARD.value, "Navy Federal Card", True, 0.90),
     r"synchrony\s*(bank|financial)?": (LoanSubcategory.CREDIT_CARD.value, "Synchrony", True, 0.90),
-    r"barclays?\s*(card|bank)?": (LoanSubcategory.CREDIT_CARD.value, "Barclays", True, 0.90),
+    r"barclays?\s*(card|bank|pymt|\w+\s+co)?": (LoanSubcategory.CREDIT_CARD.value, "Barclays", True, 0.85),
     r"apple\s*card": (LoanSubcategory.CREDIT_CARD.value, "Apple Card", True, 0.95),
-    r"td\s*bank\s*card": (LoanSubcategory.CREDIT_CARD.value, "TD Bank Card", True, 0.95),
-    r"pnc\s*card": (LoanSubcategory.CREDIT_CARD.value, "PNC Card", True, 0.95),
-    r"us\s*bank\s*card": (LoanSubcategory.CREDIT_CARD.value, "US Bank Card", True, 0.95),
+    r"td\s*bank\s*(card|pymt)": (LoanSubcategory.CREDIT_CARD.value, "TD Bank Card", True, 0.95),
+    r"pnc\s*(card|pymt|\w+\s+co)": (LoanSubcategory.CREDIT_CARD.value, "PNC Card", True, 0.90),
+    r"us\s*bank\s*(card|pymt)": (LoanSubcategory.CREDIT_CARD.value, "US Bank Card", True, 0.95),
 
     # -------------------------------------------------------------------------
     # BUY NOW PAY LATER (Discretionary - short-term financing)
     # -------------------------------------------------------------------------
     r"affirm": (LoanSubcategory.BNPL.value, "Affirm", False, 0.95),
+    r"best\s*buy\s*(pymt|payment|financing)": (LoanSubcategory.BNPL.value, "Best Buy Financing", False, 0.90),
     r"klarna": (LoanSubcategory.BNPL.value, "Klarna", False, 0.95),
     r"afterpay": (LoanSubcategory.BNPL.value, "Afterpay", False, 0.95),
     r"sezzle": (LoanSubcategory.BNPL.value, "Sezzle", False, 0.95),

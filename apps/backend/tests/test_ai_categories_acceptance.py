@@ -19,7 +19,7 @@ def _seed_for_acceptance(db_conn):
         ["acc1", "acc1", "checking", "USD"],
     )
     db_conn.execute(
-        "INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        'INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         ["tx1", "acc1", datetime(2024, 1, 1), -12.34, "USD", "grocery store", "fp_tx1", datetime.now(UTC)],
     )
     cols = [row[1] for row in db_conn.execute("PRAGMA table_info('category')").fetchall()]

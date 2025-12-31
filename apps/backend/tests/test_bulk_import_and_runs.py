@@ -61,4 +61,6 @@ class TestBulkImportAndRuns(unittest.TestCase):
         # no transactions remain
         rtx = self.client.get('/api/transactions?limit=10')
         self.assertEqual(rtx.status_code, 200)
-        self.assertEqual(len(rtx.json()), 0)
+        data = rtx.json()
+        items = data.get("items", data) if isinstance(data, dict) else data
+        self.assertEqual(len(items), 0)

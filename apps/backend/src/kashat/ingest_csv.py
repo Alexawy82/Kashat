@@ -80,61 +80,70 @@ def import_csv_upload(file_bytes: bytes, filename: str, account_id: str, run_id:
     report_f = report_path.open("w", encoding="utf-8")
     errors = 0
 
-    for idx, row in enumerate(reader, start=1):
-        raw_count += 1
-        # store raw
-        conn.execute(
-            "INSERT INTO raw_record (id, file_id, row_no, raw_json, parsed_at) VALUES (?, ?, ?, ?, ?)",
-            [str(uuid.uuid4()), file_id, idx, json.dumps(row), now],
-        )
+    try:
+        conn.execute("BEGIN")
+        for idx, row in enumerate(reader, start=1):
+            raw_count += 1
+            # store raw
+            conn.execute(
+                "INSERT INTO raw_record (id, file_id, row_no, raw_json, parsed_at) VALUES (?, ?, ?, ?, ?)",
+                [str(uuid.uuid4()), file_id, idx, json.dumps(row), now],
+            )
 
-        try:
-            posted_at, desc_norm, amount, curr = normalize_row(row)
-            fp = tx_fingerprint(account_id, posted_at, amount, desc_norm)
-
-            tx_id = str(uuid.uuid4())
             try:
-                conn.execute(
-                    """
-                    INSERT INTO [transaction] (
-                        id, account_id, posted_at, amount, currency, description_norm,
-                        external_id, fingerprint, source_raw_id, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        tx_id,
-                        account_id,
-                        posted_at,
-                        amount,
-                        curr,
-                        desc_norm,
-                        None,
-                        fp,
-                        None,
-                        now,
-                    ],
-                )
-                inserted += 1
-                # Link transaction to ingest run/file for management
+                posted_at, desc_norm, amount, curr = normalize_row(row)
+                fp = tx_fingerprint(account_id, posted_at, amount, desc_norm)
+
+                tx_id = str(uuid.uuid4())
                 try:
                     conn.execute(
-                        "INSERT INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?) ON CONFLICT (tx_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_id = EXCLUDED.file_id",
-                        [tx_id, run_id, file_id],
+                        """
+                        INSERT INTO [transaction] (
+                            id, account_id, posted_at, amount, currency, description_norm,
+                            external_id, fingerprint, source_raw_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            tx_id,
+                            account_id,
+                            posted_at,
+                            amount,
+                            curr,
+                            desc_norm,
+                            None,
+                            fp,
+                            None,
+                            now,
+                        ],
                     )
-                except Exception:
-                    pass
+                    inserted += 1
+                    # Link transaction to ingest run/file for management
+                    try:
+                        conn.execute(
+                            "INSERT INTO transaction_ingest (tx_id, run_id, file_id) VALUES (?, ?, ?) ON CONFLICT (tx_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_id = EXCLUDED.file_id",
+                            [tx_id, run_id, file_id],
+                        )
+                    except Exception:
+                        pass
+                except Exception as e:
+                    # Handle both DuckDB (ConstraintException) and SQLite (IntegrityError)
+                    if e.__class__.__name__ not in ('ConstraintException', 'IntegrityError'):
+                        raise
+                    deduped += 1
+                    continue
             except Exception as e:
-                # Handle both DuckDB (ConstraintException) and SQLite (IntegrityError)
-                if e.__class__.__name__ not in ('ConstraintException', 'IntegrityError'):
-                    raise
-                deduped += 1
+                errors += 1
+                report_f.write(json.dumps({"row_no": idx, "error": str(e), "row": row}, ensure_ascii=False) + "\n")
                 continue
-        except Exception as e:
-            errors += 1
-            report_f.write(json.dumps({"row_no": idx, "error": str(e), "row": row}, ensure_ascii=False) + "\n")
-            continue
-
-    report_f.close()
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        report_f.close()
     return {
         "run_id": run_id,
         "file_id": file_id,

@@ -992,12 +992,12 @@ async def get_queue_stats() -> dict:
     # Get counts by status from last 24 hours
     stats = conn.execute("""
         SELECT
-            COUNT(*) FILTER (WHERE status = 'processing') as active,
-            COUNT(*) FILTER (WHERE status = 'pending') as pending,
-            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-            COUNT(*) FILTER (WHERE status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE status = 'paused') as paused,
-            COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled
+            SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) as paused,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
         FROM ai_bulk_job
         WHERE created_at > (datetime('now', '-24 hours'))
     """).fetchone()

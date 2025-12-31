@@ -113,6 +113,19 @@ export function useTransactionStats(filter: Omit<TransactionFilter, 'page' | 'li
   })
 }
 
+// Consolidated filter stats for transactions page (single API call instead of 3)
+export function useFilterStats() {
+  return useQuery({
+    queryKey: ['filter-stats'],
+    queryFn: async () => {
+      const { data, error } = await client.get('/api/transactions/filter-stats')
+      if (error) throw new Error('Failed to fetch filter stats')
+      return data as { total: number; uncategorized: number; business: number; income: number }
+    },
+    staleTime: 30000,
+  })
+}
+
 // Delete a transaction with optimistic update
 export function useDeleteTransaction() {
   const queryClient = useQueryClient()
@@ -199,6 +212,36 @@ export function useUpdateTransaction() {
   })
 }
 
+// Create a new transaction manually
+interface CreateTransactionParams {
+  account_id: string
+  posted_at: string
+  amount: number
+  description: string
+  category_id?: string
+  is_income?: boolean
+  is_business?: boolean
+}
+
+export function useCreateTransaction() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (params: CreateTransactionParams) => {
+      const { data, error } = await client.post('/api/transactions', {
+        body: params
+      })
+      if (error) throw new Error('Failed to create transaction')
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+    }
+  })
+}
+
 // Set transaction category with optimistic update
 export function useSetTransactionCategory() {
   const queryClient = useQueryClient()
@@ -247,6 +290,108 @@ export function useSetTransactionCategory() {
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['transaction-stats'] })
       queryClient.invalidateQueries({ queryKey: ['categories'] })
+    }
+  })
+}
+
+// Bulk update transactions
+interface BulkUpdateParams {
+  ids: string[]
+  updates: {
+    category_id?: string
+    is_business?: boolean
+    is_income?: boolean
+  }
+}
+
+export function useBulkUpdateTransactions() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ ids, updates }: BulkUpdateParams) => {
+      const { data, error } = await client.post('/api/transactions/bulk-update', {
+        body: { ids, updates }
+      })
+      if (error) throw new Error('Failed to bulk update transactions')
+      return data
+    },
+    // Optimistic update for instant UI feedback
+    onMutate: async ({ ids, updates }) => {
+      await queryClient.cancelQueries({ queryKey: ['transactions'] })
+      const previousData = queryClient.getQueriesData({ queryKey: ['transactions'] })
+
+      queryClient.setQueriesData({ queryKey: ['transactions'] }, (old: any) => {
+        if (!old?.items) return old
+        return {
+          ...old,
+          items: old.items.map((item: any) =>
+            ids.includes(item.id) ? { ...item, ...updates } : item
+          )
+        }
+      })
+
+      return { previousData }
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousData) {
+        context.previousData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data)
+        })
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['filter-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
+    }
+  })
+}
+
+// Bulk delete transactions
+interface BulkDeleteParams {
+  ids: string[]
+}
+
+export function useBulkDeleteTransactions() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ ids }: BulkDeleteParams) => {
+      const { data, error } = await client.post('/api/transactions/bulk-delete', {
+        body: { ids }
+      })
+      if (error) throw new Error('Failed to bulk delete transactions')
+      return data
+    },
+    // Optimistic delete
+    onMutate: async ({ ids }) => {
+      await queryClient.cancelQueries({ queryKey: ['transactions'] })
+      const previousData = queryClient.getQueriesData({ queryKey: ['transactions'] })
+
+      queryClient.setQueriesData({ queryKey: ['transactions'] }, (old: any) => {
+        if (!old?.items) return old
+        return {
+          ...old,
+          items: old.items.filter((item: any) => !ids.includes(item.id)),
+          total: Math.max(0, (old.total || 0) - ids.length)
+        }
+      })
+
+      return { previousData }
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousData) {
+        context.previousData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data)
+        })
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['filter-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
     }
   })
 }

@@ -464,8 +464,8 @@ def predictions(
         SELECT t.description_norm AS merchant,
                COALESCE(c.name,'Uncategorized') AS category,
                SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS spend,
-               LIST(t.id) AS tx_ids
-        FROM [transaction] t
+               GROUP_CONCAT(t.id) AS tx_ids
+        FROM "transaction" t
         LEFT JOIN transaction_category tc ON t.id = tc.tx_id
         LEFT JOIN category c ON tc.category_id = c.id
         {join_mt}
@@ -481,8 +481,9 @@ def predictions(
     savings_ops = []
     for m in merch_rows[:10]:
         est = float(m["spend"]) * 0.1
-        tx_ids = m.get("tx_ids") or []
-        # DuckDB LIST returns Python list already
+        tx_ids_raw = m.get("tx_ids") or ""
+        # SQLite GROUP_CONCAT returns comma-separated string
+        tx_ids = tx_ids_raw.split(",") if isinstance(tx_ids_raw, str) and tx_ids_raw else (tx_ids_raw if isinstance(tx_ids_raw, list) else [])
         savings_ops.append({
             "pattern": f"{m['merchant']} in {m['category']}",
             "estMonthlySave": round(est, 2),
@@ -1219,3 +1220,112 @@ async def get_smart_insights(
             "generated_at": datetime.now().isoformat(),
             "error": "Predictive analytics not available yet - need more transaction data"
         }
+
+
+@router.get("/income-summary")
+def income_summary(
+    months: int = Query(6, ge=1, le=24, description="Number of months to analyze"),
+):
+    """
+    Get income summary with breakdown by source and monthly trend.
+
+    Returns detected income sources, monthly totals, and comparison to average.
+    """
+    conn = get_conn()
+    today = date.today()
+    start_date = (today.replace(day=1) - timedelta(days=months * 30)).replace(day=1)
+
+    # Get monthly income totals (only is_income=1 transactions)
+    monthly_rows = conn.execute("""
+        SELECT
+            strftime('%Y-%m', t.posted_at) as month,
+            SUM(t.amount) as total,
+            COUNT(*) as count
+        FROM [transaction] t
+        LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
+        WHERE t.is_income = 1
+          AND t.posted_at >= ?
+          AND (mt.left_tx_id IS NULL AND mt.right_tx_id IS NULL)
+        GROUP BY 1
+        ORDER BY 1
+    """, [start_date.isoformat()]).fetchall()
+
+    monthly_income = [
+        {"month": r[0], "total": round(r[1], 2), "count": r[2]}
+        for r in monthly_rows
+    ]
+
+    # Calculate averages
+    totals = [m["total"] for m in monthly_income]
+    avg_monthly = sum(totals) / len(totals) if totals else 0
+
+    # Current month income
+    current_month = today.strftime('%Y-%m')
+    current_month_income = next(
+        (m["total"] for m in monthly_income if m["month"] == current_month), 0
+    )
+
+    # Last month income for comparison
+    last_month = (today.replace(day=1) - timedelta(days=1)).strftime('%Y-%m')
+    last_month_income = next(
+        (m["total"] for m in monthly_income if m["month"] == last_month), 0
+    )
+
+    # Get income by source pattern (group similar descriptions)
+    source_rows = conn.execute("""
+        SELECT
+            CASE
+                WHEN t.description_norm LIKE '%des:bank of am%' THEN 'Salary (Direct Deposit)'
+                WHEN t.description_norm LIKE '%payroll%' OR t.description_norm LIKE '%direct dep%' THEN 'Salary (Payroll)'
+                WHEN t.description_norm LIKE '%dividend%' THEN 'Dividends'
+                WHEN t.description_norm LIKE '%interest%' THEN 'Interest'
+                WHEN t.description_norm LIKE '%zelle%' THEN 'Zelle Received'
+                WHEN t.description_norm LIKE '%venmo%' THEN 'Venmo Received'
+                ELSE 'Other Income'
+            END as source,
+            SUM(t.amount) as total,
+            COUNT(*) as count,
+            AVG(t.amount) as avg_amount
+        FROM [transaction] t
+        LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
+        WHERE t.is_income = 1
+          AND t.posted_at >= ?
+          AND (mt.left_tx_id IS NULL AND mt.right_tx_id IS NULL)
+        GROUP BY 1
+        ORDER BY total DESC
+    """, [start_date.isoformat()]).fetchall()
+
+    by_source = [
+        {
+            "source": r[0],
+            "total": round(r[1], 2),
+            "count": r[2],
+            "avg_amount": round(r[3], 2),
+            "percentage": round(r[1] / sum(totals) * 100, 1) if sum(totals) > 0 else 0
+        }
+        for r in source_rows
+    ]
+
+    # Comparison to previous period
+    vs_last_month = (
+        round((current_month_income - last_month_income) / last_month_income * 100, 1)
+        if last_month_income > 0 else 0
+    )
+    vs_average = (
+        round((current_month_income - avg_monthly) / avg_monthly * 100, 1)
+        if avg_monthly > 0 else 0
+    )
+
+    return {
+        "current_month": {
+            "month": current_month,
+            "total": round(current_month_income, 2),
+            "vs_last_month": vs_last_month,
+            "vs_average": vs_average,
+        },
+        "average_monthly": round(avg_monthly, 2),
+        "by_source": by_source,
+        "monthly_trend": monthly_income,
+        "total_income": round(sum(totals), 2),
+        "months_analyzed": len(monthly_income),
+    }

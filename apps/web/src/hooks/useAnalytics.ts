@@ -338,3 +338,40 @@ export function useAIDashboardSummary(params?: {
     },
   })
 }
+
+// Income summary for dashboard widget
+export function useIncomeSummary(months: number = 6) {
+  return useQuery({
+    queryKey: ['income-summary', months],
+    queryFn: async () => {
+      const { data, error } = await client.get('/api/analytics/income-summary', {
+        params: { query: { months } }
+      })
+      if (error) throw new Error('Failed to fetch income summary')
+      return data as {
+        current_month: {
+          month: string
+          total: number
+          vs_last_month: number
+          vs_average: number
+        }
+        average_monthly: number
+        by_source: Array<{
+          source: string
+          total: number
+          count: number
+          avg_amount: number
+          percentage: number
+        }>
+        monthly_trend: Array<{
+          month: string
+          total: number
+          count: number
+        }>
+        total_income: number
+        months_analyzed: number
+      }
+    },
+    staleTime: 60 * 1000, // 1 minute
+  })
+}

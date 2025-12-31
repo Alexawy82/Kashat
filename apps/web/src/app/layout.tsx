@@ -6,6 +6,7 @@ import { MobileNav } from '@/components/layout/MobileNav'
 import { BottomNav } from '@/components/layout/BottomNav'
 import { CommandPalette } from '@/components/layout/CommandPalette'
 import { Toaster } from '@/components/ui/Toaster'
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 
 export const metadata = {
   title: 'Kashat',
@@ -43,7 +44,9 @@ export default function RootLayout({
               id="main-content"
               className="flex-1 md:ml-64 overflow-y-auto bg-slate-50 dark:bg-background pt-16 md:pt-0 pb-20 md:pb-0 p-4 md:p-8"
             >
-              {children}
+              <ErrorBoundary>
+                {children}
+              </ErrorBoundary>
             </main>
           </div>
 

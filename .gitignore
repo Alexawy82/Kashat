@@ -1,17 +1,62 @@
+# Dependencies
+node_modules/
+.npm/
+.pnpm-store/
+
+# Python
 __pycache__/
 .pytest_cache/
-.venv/
-env/
 *.pyc
 *.pyo
-*.DS_Store
-node_modules/
-.env
-data/
+*.egg-info/
+.eggs/
+.venv/
+env/
+venv/
+
+# Build outputs
+.next/
+apps/web/.next/
+tmp/
 dist/
 build/
-.next
-apps/web/.next
-apps/web/tmp/ll_next
-logs
-.sessions
+out/
+
+# Data and logs (local only)
+data/
+logs/
+*.db
+*.sqlite
+*.duckdb
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.DS_Store
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytestdata/
+
+# Sessions
+.sessions/
+
+# PIDs
+.pids/
+
+# Temporary files
+apps/web/tmp/
+
+# Backup folder from cleanup
+_backup_before_cleanup/
+
+# Bank statements (sensitive data)
+bank/

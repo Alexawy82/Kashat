@@ -165,7 +165,7 @@ def delete_all_data(body: DeleteAllBody) -> dict:
         "recurring_tx",
         "recurring_series",
         "event_log",
-        "transaction",
+        "[transaction]",
         "rule",
         "ai_bulk_job",
         "ai_workflow_run",
@@ -495,7 +495,7 @@ def wipe_all_data(body: WipeAllBody) -> dict:
         del_all(t)
     # Core tables
     for t in (
-        "transaction",
+        "[transaction]",
         "import_file",
         "import_run",
         "recurring_series",

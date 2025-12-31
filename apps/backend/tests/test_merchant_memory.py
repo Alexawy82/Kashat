@@ -37,7 +37,7 @@ def sample_transaction():
     # Create test transaction
     tx_id = str(uuid.uuid4())
     conn.execute("""
-        INSERT INTO transaction (id, account_id, posted_at, amount, description_norm, fingerprint, created_at)
+        INSERT INTO "transaction" (id, account_id, posted_at, amount, description_norm, fingerprint, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, [tx_id, account_id, "2024-01-01", -25.50, "SHEETZ #1234 PURCHASE", f"test-{tx_id}", datetime.now(UTC)])
     
@@ -59,7 +59,7 @@ def sample_transaction():
     # Cleanup
     conn.execute("DELETE FROM merchant_category_mapping WHERE merchant_pattern = ?", ["Sheetz"])
     conn.execute("DELETE FROM transaction_category WHERE tx_id = ?", [tx_id])
-    conn.execute("DELETE FROM transaction WHERE id = ?", [tx_id])
+    conn.execute('DELETE FROM "transaction" WHERE id = ?', [tx_id])
     conn.execute("DELETE FROM category WHERE id = ?", [category_id])
     conn.execute("DELETE FROM account WHERE id = ?", [account_id])
 
@@ -462,7 +462,7 @@ async def test_end_to_end_merchant_learning_flow(sample_transaction):
     tx_id2 = str(uuid.uuid4())
     conn = get_conn()
     conn.execute("""
-        INSERT INTO transaction (id, account_id, posted_at, amount, description_norm, fingerprint, created_at)
+        INSERT INTO "transaction" (id, account_id, posted_at, amount, description_norm, fingerprint, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, [tx_id2, account_id, "2024-01-02", -35.00, "SHEETZ #5555 DIFFERENT STORE", f"test-{tx_id2}", datetime.now(UTC)])
     
@@ -481,7 +481,7 @@ async def test_end_to_end_merchant_learning_flow(sample_transaction):
         
     finally:
         # Cleanup second transaction
-        conn.execute("DELETE FROM transaction WHERE id = ?", [tx_id2])
+        conn.execute('DELETE FROM "transaction" WHERE id = ?', [tx_id2])
 
 
 if __name__ == "__main__":

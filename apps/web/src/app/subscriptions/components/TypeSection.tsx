@@ -30,7 +30,7 @@ import {
 } from 'lucide-react'
 
 type SortOption = 'amount-desc' | 'amount-asc' | 'name' | 'next-date' | 'status'
-type FilterStatus = 'all' | 'active' | 'overdue' | 'likely_cancelled'
+type FilterStatus = 'all' | 'active' | 'paused' | 'likely_cancelled'
 
 const tabIcons: Record<string, typeof Tv> = {
   all: Layers,
@@ -48,6 +48,16 @@ const tabColors: Record<string, string> = {
   loans: 'text-amber-600',
   'credit-cards': 'text-green-600',
   insurance: 'text-red-600',
+}
+
+// Empty state messages for each category
+const emptyStateMessages: Record<string, string> = {
+  all: 'No recurring payments detected yet. Import transactions to see your subscriptions, bills, and recurring expenses.',
+  subscriptions: 'No subscriptions detected yet. Streaming services, gym memberships, and software subscriptions will appear here.',
+  bills: 'No bills detected yet. Rent, mortgage, utilities, and household essentials will appear here.',
+  loans: 'No loan payments detected. Auto loans, student loans, and personal loans will appear here.',
+  'credit-cards': 'No credit card payments detected yet. Monthly credit card payments will appear here when found.',
+  insurance: 'No insurance payments detected yet. Auto, health, home, and life insurance payments will appear here.',
 }
 
 export function TypeSection({
@@ -74,10 +84,10 @@ export function TypeSection({
 
   // Calculate stats
   const stats = useMemo(() => {
-    const active = items.filter((i) => i.status === 'active').length
-    const overdue = items.filter((i) => i.status === 'overdue').length
+    const active = items.filter((i) => i.status === 'confirmed' || i.status === 'active').length
+    const paused = items.filter((i) => i.status === 'paused').length
     const essential = items.filter((i) => i.is_essential).length
-    return { active, overdue, essential }
+    return { active, paused, essential }
   }, [items])
 
   // Filter and sort items
@@ -85,7 +95,9 @@ export function TypeSection({
     let filtered = [...items]
 
     // Apply status filter
-    if (filterStatus !== 'all') {
+    if (filterStatus === 'active') {
+      filtered = filtered.filter((item) => item.status === 'active' || item.status === 'confirmed')
+    } else if (filterStatus !== 'all') {
       filtered = filtered.filter((item) => item.status === filterStatus)
     }
 
@@ -108,7 +120,7 @@ export function TypeSection({
           const dateB = b.next_date || '9999-99-99'
           return dateA.localeCompare(dateB)
         case 'status':
-          const statusOrder = { overdue: 0, active: 1, likely_cancelled: 2 }
+          const statusOrder = { confirmed: 0, active: 0, paused: 1, likely_cancelled: 2 }
           const orderA = statusOrder[a.status as keyof typeof statusOrder] ?? 3
           const orderB = statusOrder[b.status as keyof typeof statusOrder] ?? 3
           return orderA - orderB
@@ -142,10 +154,10 @@ export function TypeSection({
                     {stats.active} active
                   </Badge>
                 )}
-                {stats.overdue > 0 && (
-                  <Badge variant="outline" className="text-red-600 border-red-200 text-[10px]">
+                {stats.paused > 0 && (
+                  <Badge variant="outline" className="text-amber-600 border-amber-200 text-[10px]">
                     <AlertCircle className="h-3 w-3 mr-1" />
-                    {stats.overdue} overdue
+                    {stats.paused} paused
                   </Badge>
                 )}
                 {stats.essential > 0 && (
@@ -199,7 +211,7 @@ export function TypeSection({
               <DropdownMenuRadioGroup value={filterStatus} onValueChange={(v) => setFilterStatus(v as FilterStatus)}>
                 <DropdownMenuRadioItem value="all">All Status</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="active">Active Only</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="overdue">Overdue Only</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="paused">Paused Only</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="likely_cancelled">Likely Cancelled</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
               <DropdownMenuSeparator />
@@ -235,8 +247,10 @@ export function TypeSection({
         {isLoading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">Loading…</div>
         ) : displayItems.length === 0 ? (
-          <div className="text-sm text-muted-foreground py-8 text-center">
-            {hasActiveFilters ? 'No items match your filters.' : 'No recurring items found.'}
+          <div className="text-sm text-muted-foreground py-8 text-center px-4">
+            {hasActiveFilters
+              ? 'No items match your filters.'
+              : emptyStateMessages[tabKey || 'all'] || 'No recurring items found.'}
           </div>
         ) : (
           <div className="grid gap-2">

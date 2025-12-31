@@ -41,7 +41,9 @@ class TestAPISmoke(unittest.TestCase):
 
         r2 = self.client.get("/api/transactions?limit=10", headers=self.auth_headers)
         self.assertEqual(r2.status_code, 200)
-        rows = r2.json()
+        data = r2.json()
+        # API returns paginated response {items: [...], total, limit, offset, total_pages}
+        rows = data.get("items", data) if isinstance(data, dict) else data
         self.assertIsInstance(rows, list)
         self.assertGreaterEqual(len(rows), 1)
 
@@ -83,7 +85,9 @@ class TestAPISmoke(unittest.TestCase):
         self.client.post("/api/detect/adjustments?commit=true", headers=self.auth_headers)
         # check flags present
         r = self.client.get("/api/transactions?limit=50", headers=self.auth_headers)
-        flags = [(x.get("is_income"), x.get("is_adjustment")) for x in r.json()]
+        data = r.json()
+        rows = data.get("items", data) if isinstance(data, dict) else data
+        flags = [(x.get("is_income"), x.get("is_adjustment")) for x in rows]
         self.assertIn((True, False), flags)
         self.assertIn((False, True), flags)
 

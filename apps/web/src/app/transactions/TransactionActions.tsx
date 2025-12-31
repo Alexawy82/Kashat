@@ -31,6 +31,7 @@ import {
   Tags,
   Store,
   Briefcase,
+  TrendingUp,
   Trash2,
   Loader2,
   AlertTriangle,
@@ -49,6 +50,7 @@ interface Transaction {
   category?: string
   category_id?: string
   is_business?: boolean
+  is_income?: boolean
 }
 
 interface TransactionActionsProps {
@@ -71,6 +73,13 @@ export function TransactionActions({ transaction }: TransactionActionsProps) {
     updateTransaction.mutate({
       txId: transaction.id,
       is_business: !transaction.is_business,
+    })
+  }
+
+  const handleToggleIncome = () => {
+    updateTransaction.mutate({
+      txId: transaction.id,
+      is_income: !transaction.is_income,
     })
   }
 
@@ -118,6 +127,10 @@ export function TransactionActions({ transaction }: TransactionActionsProps) {
           <DropdownMenuItem onClick={handleToggleBusiness}>
             <Briefcase className="h-4 w-4 mr-2" />
             {transaction.is_business ? "Unmark as Business" : "Mark as Business"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleToggleIncome}>
+            <TrendingUp className="h-4 w-4 mr-2" />
+            {transaction.is_income ? "Unmark as Income" : "Mark as Income"}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, CreditCard, Calendar, BarChart3, Menu } from "lucide-react";
+import { LayoutDashboard, CreditCard, Calendar, PiggyBank } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 const bottomNavItems = [
   { href: "/", label: "Home", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: CreditCard },
-  { href: "/calendar", label: "Calendar", icon: Calendar },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/bills", label: "Bills", icon: Calendar },
+  { href: "/budget", label: "Budget", icon: PiggyBank },
 ];
 
 export function BottomNav() {

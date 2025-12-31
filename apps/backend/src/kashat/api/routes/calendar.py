@@ -254,51 +254,140 @@ def get_todays_bills() -> List[UpcomingBill]:
     return [UpcomingBill(**s) for s in series]
 
 
-@router.get("/overdue")
-def get_overdue_bills() -> List[UpcomingBill]:
-    """Get bills that are past due (next_date in the past)."""
+# =============================================================================
+# Enriched Endpoint (consolidates API calls into 1)
+# =============================================================================
+
+class EnrichedCalendarResponse(BaseModel):
+    """All calendar data in a single response."""
+    calendar: MonthCalendar
+    summary: BillSummary
+    upcoming: List[UpcomingBill]
+    stats: dict
+    cancelled: Optional[dict] = None
+
+
+@router.get("/month/{year}/{month}/enriched")
+def get_enriched_month_calendar(
+    year: int = Path(..., ge=2000, le=2100),
+    month: int = Path(..., ge=1, le=12)
+) -> EnrichedCalendarResponse:
+    """Get all calendar data in a single call.
+
+    Consolidates:
+    - Monthly calendar grid
+    - Bill summary (7/30/90 day totals)
+    - Upcoming bills (next 7 days)
+
+    This reduces frontend API calls from 3 to 1.
+    """
+    # 1. Get calendar data
+    calendar = get_month_calendar(year, month)
+
+    # 2. Get summary
+    summary = get_bill_summary()
+
+    # 3. Get upcoming (next 7 days)
+    upcoming = get_upcoming_bills(days=7)
+
+    # 4. Calculate additional stats
+    essential_count = sum(
+        1 for day in calendar.days
+        for bill in day.bills
+        if bill.is_essential
+    )
+    discretionary_count = sum(
+        1 for day in calendar.days
+        for bill in day.bills
+        if not bill.is_essential
+    )
+    essential_total = sum(
+        bill.amount for day in calendar.days
+        for bill in day.bills
+        if bill.is_essential
+    )
+    discretionary_total = sum(
+        bill.amount for day in calendar.days
+        for bill in day.bills
+        if not bill.is_essential
+    )
+
+    # Get cancelled stats
     conn = get_conn()
+    cancelled_stats = _get_cancelled_stats(conn)
 
-    today = date.today()
-    past_30 = today - timedelta(days=30)
+    return EnrichedCalendarResponse(
+        calendar=calendar,
+        summary=summary,
+        upcoming=upcoming,
+        stats={
+            "essential_count": essential_count,
+            "discretionary_count": discretionary_count,
+            "essential_total": round(essential_total, 2),
+            "discretionary_total": round(discretionary_total, 2),
+        },
+        cancelled=cancelled_stats,
+    )
 
-    rows = conn.execute(
-        """
+
+def _get_cancelled_stats(conn) -> dict:
+    """Get stats about recently cancelled recurring series."""
+    cadence_multipliers = {
+        'weekly': 4.33,      # ~4.33 weeks per month
+        'biweekly': 2.17,    # ~2.17 bi-weeks per month
+        'monthly': 1,
+        'quarterly': 0.33,   # 1/3 per month
+        'semiannual': 0.167, # 1/6 per month
+        'annual': 0.083,     # 1/12 per month
+    }
+
+    # Get ALL cancelled series for total savings calculation
+    all_rows = conn.execute("""
+        SELECT amount_mean, cadence
+        FROM recurring_series
+        WHERE status = 'cancelled'
+    """).fetchall()
+
+    total_monthly_savings = 0.0
+    for row in all_rows:
+        amount = abs(row[0] or 0)
+        cadence = row[1] or 'monthly'
+        multiplier = cadence_multipliers.get(cadence, 1)
+        total_monthly_savings += amount * multiplier
+
+    # Get recent 10 for display
+    recent_rows = conn.execute("""
         SELECT
-            rs.id,
-            COALESCE(rs.display_name, rs.name) as name,
-            rs.amount_mean,
-            rs.next_date,
-            rs.recurring_type,
-            rs.cadence,
-            COALESCE(rs.is_essential, 0) as is_essential,
-            a.name as account_name
-        FROM recurring_series rs
-        LEFT JOIN account a ON rs.account_id = a.id
-        WHERE rs.status IN ('pending', 'confirmed')
-          AND rs.next_date IS NOT NULL
-          AND rs.next_date < ?
-          AND rs.next_date >= ?
-        ORDER BY rs.next_date
-        """,
-        [today.isoformat(), past_30.isoformat()]
-    ).fetchall()
+            id, name, display_name, amount_mean, cadence,
+            recurring_type, last_date
+        FROM recurring_series
+        WHERE status = 'cancelled'
+        ORDER BY last_date DESC
+        LIMIT 10
+    """).fetchall()
 
-    result = []
-    for row in rows:
-        next_date = _parse_date(row[3])
-        days_until = (next_date - today).days if next_date else 0
+    cancelled_items = []
+    for row in recent_rows:
+        amount = abs(row[3] or 0)
+        cadence = row[4] or 'monthly'
+        multiplier = cadence_multipliers.get(cadence, 1)
+        monthly_amount = amount * multiplier
 
-        result.append(UpcomingBill(
-            id=row[0],
-            name=row[1] or "Unknown",
-            amount=abs(float(row[2] or 0)),
-            due_date=row[3],
-            recurring_type=row[4],
-            cadence=row[5],
-            is_essential=bool(row[6]),
-            days_until=days_until,
-            account_name=row[7]
-        ))
+        cancelled_items.append({
+            "id": row[0],
+            "name": row[1] or row[2],
+            "amount": round(amount, 2),
+            "cadence": cadence,
+            "type": row[5],
+            "last_date": row[6],
+            "monthly_equivalent": round(monthly_amount, 2),
+        })
 
-    return result
+    total_count = len(all_rows)
+
+    return {
+        "recent": cancelled_items,
+        "total_count": total_count,
+        "monthly_savings": round(total_monthly_savings, 2),
+        "annual_savings": round(total_monthly_savings * 12, 2),
+    }

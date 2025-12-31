@@ -18,6 +18,16 @@ from fastapi import APIRouter, Query, Path, HTTPException
 from pydantic import BaseModel, Field
 
 from ...db import get_conn
+from ...income_detector import (
+    detect_income_sources, get_total_monthly_income, save_income_sources,
+    update_income_source, get_saved_income_sources, backfill_income_transactions,
+    detect_and_save_income, mark_transaction_income
+)
+from ...budget_intelligence import (
+    generate_budget_suggestion, calculate_budget_pace, get_committed_flexible_breakdown,
+    apply_budget_suggestion, generate_category_suggestions, get_budget_settings,
+    update_budget_settings, save_pace_snapshot
+)
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +254,189 @@ def create_budget(body: BudgetCreate) -> Budget:
     budgets = list_budgets(active_only=False)
     return next(b for b in budgets if b.id == budget_id)
 
+
+# =============================================================================
+# BUDGET INTELLIGENCE ENDPOINTS (must come before /{budget_id} routes)
+# =============================================================================
+
+@router.get("/income")
+def get_income_sources_endpoint() -> dict:
+    """Get detected income sources."""
+    saved = get_saved_income_sources()
+    if saved:
+        income = get_total_monthly_income()
+        return {
+            "sources": saved,
+            "total_monthly": income['total_monthly'],
+            "by_type": income.get('by_type', {}),
+            "confidence": income.get('confidence', 0)
+        }
+
+    detected = detect_income_sources()
+    income = get_total_monthly_income()
+
+    return {
+        "sources": [d.to_dict() for d in detected],
+        "total_monthly": income['total_monthly'],
+        "by_type": income.get('by_type', {}),
+        "confidence": income.get('confidence', 0),
+        "needs_confirmation": True
+    }
+
+
+@router.post("/income/detect")
+def detect_and_save_income_endpoint() -> dict:
+    """Detect income sources and save to database.
+
+    Uses adaptive lookback to find income even if default period has no data.
+    """
+    # Use the improved function with adaptive detection
+    result = detect_and_save_income()
+
+    return result
+
+
+@router.post("/income/backfill")
+def backfill_income_endpoint() -> dict:
+    """Scan all positive transactions and mark likely income.
+
+    This identifies:
+    - Salary/paycheck deposits
+    - Zelle/Venmo received
+    - Investment dividends
+    - ATM deposits
+
+    And excludes:
+    - Internal transfers (savings to checking)
+    - Refunds and rebates
+    - Account corrections
+    """
+    result = backfill_income_transactions()
+    return result
+
+
+@router.get("/suggest")
+def get_budget_suggestion_endpoint(
+    savings_percent: Optional[float] = Query(None, ge=0, le=0.5),
+    lookback_months: int = Query(3, ge=1, le=12)
+) -> dict:
+    """Generate a smart budget suggestion."""
+    suggestion = generate_budget_suggestion(
+        savings_target_percent=savings_percent,
+        lookback_months=lookback_months
+    )
+
+    return {
+        "id": suggestion.id,
+        "name": f"Smart Budget {date.today().strftime('%B %Y')}",
+        "period": "monthly",
+        "total_income": suggestion.total_income,
+        "suggested_total": suggestion.total_budget,
+        "savings_target": suggestion.savings_amount,
+        "savings_percent": suggestion.savings_target,
+        "categories": [
+            {
+                "category_id": cat.category_id,
+                "category_name": cat.category_name,
+                "suggested_limit": cat.suggested_limit,
+                "avg_spending": cat.current_avg_spending,
+                "max_spending": cat.current_avg_spending * 1.2,
+                "trend": cat.trend.value,
+                "is_committed": cat.is_committed,
+                "recurring_amount": cat.suggested_limit if cat.is_committed else 0,
+                "confidence": cat.confidence,
+                "rationale": cat.reason
+            }
+            for cat in suggestion.categories
+        ],
+        "created_at": datetime.now(UTC).isoformat()
+    }
+
+
+class ApplySuggestionRequest(BaseModel):
+    """Request to apply a budget suggestion."""
+    suggestion_id: Optional[str] = None
+    custom_name: Optional[str] = None
+
+
+@router.post("/suggest/apply")
+def apply_suggestion_endpoint(request: ApplySuggestionRequest) -> dict:
+    """Create a budget from a suggestion."""
+    suggestion = generate_budget_suggestion()
+    name = request.custom_name or f"Smart Budget {date.today().strftime('%B %Y')}"
+
+    budget_id = apply_budget_suggestion(suggestion, name, None)
+
+    return {
+        "budget_id": budget_id,
+        "name": name,
+        "categories_count": len(suggestion.categories)
+    }
+
+
+@router.get("/suggest/categories")
+def get_category_suggestions_endpoint(
+    lookback_months: int = Query(3, ge=1, le=12)
+) -> dict:
+    """Get per-category budget suggestions."""
+    suggestions = generate_category_suggestions(lookback_months)
+    return {"categories": suggestions}
+
+
+@router.get("/insights")
+def get_budget_insights_endpoint() -> dict:
+    """Get budget-related insights."""
+    from ...ai_insights import get_ai_insights_engine, InsightCategory
+
+    engine = get_ai_insights_engine()
+    all_insights = engine.generate_personalized_insights(insight_limit=20)
+
+    budget_categories = {
+        InsightCategory.BUDGET_SUGGESTION,
+        InsightCategory.BUDGET_PACE_WARNING,
+        InsightCategory.INCOME_DETECTED,
+        InsightCategory.CATEGORY_TREND,
+        InsightCategory.COMMITTED_SPENDING,
+        InsightCategory.BUDGET_ALERT
+    }
+
+    budget_insights = [
+        {
+            "id": i.id,
+            "category": i.category.value,
+            "priority": i.priority.value,
+            "title": i.title,
+            "text": i.description,
+            "action": i.recommendations[0] if i.recommendations else None,
+            "impact_score": i.impact_score,
+            "confidence": i.confidence
+        }
+        for i in all_insights
+        if i.category in budget_categories
+    ]
+
+    return {"insights": budget_insights}
+
+
+@router.get("/settings")
+def get_budget_settings_endpoint() -> dict:
+    """Get budget settings."""
+    settings = get_budget_settings()
+    return settings
+
+
+@router.put("/settings")
+def update_budget_settings_endpoint(settings: dict) -> dict:
+    """Update budget settings."""
+    success = update_budget_settings(settings)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update settings")
+    return {"updated": True, "settings": get_budget_settings()}
+
+
+# =============================================================================
+# BUDGET CRUD ENDPOINTS (with path parameters)
+# =============================================================================
 
 @router.get("/{budget_id}")
 def get_budget(budget_id: str = Path(...)) -> Budget:
@@ -475,3 +668,86 @@ def remove_category_limit(
         raise HTTPException(status_code=404, detail="Budget category not found")
 
     return {"deleted": True, "budget_id": budget_id, "category_id": category_id}
+
+
+# =============================================================================
+# PACE & BREAKDOWN ENDPOINTS (require budget_id path parameter)
+# =============================================================================
+
+@router.get("/{budget_id}/pace")
+def get_budget_pace_endpoint(
+    budget_id: str = Path(...),
+    category_id: Optional[str] = Query(None)
+) -> dict:
+    """Get pace warnings for a budget."""
+    try:
+        pace = calculate_budget_pace(budget_id, category_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {
+        "budget_id": pace.budget_id,
+        "overall_status": pace.status.value,
+        "overall_pace_percent": (pace.amount_spent / pace.amount_limit * 100) if pace.amount_limit > 0 else 0,
+        "total_spent": pace.amount_spent,
+        "total_limit": pace.amount_limit,
+        "days_elapsed": pace.days_elapsed,
+        "days_remaining": pace.days_remaining,
+        "warnings": [{
+            "category_id": pace.budget_category_id or "overall",
+            "category_name": pace.category_name or "Overall Budget",
+            "status": pace.status.value,
+            "spent": pace.amount_spent,
+            "limit": pace.amount_limit,
+            "pace_percent": (pace.amount_spent / pace.amount_limit * 100) if pace.amount_limit > 0 else 0,
+            "expected_by_end": pace.projected_total,
+            "days_in_period": pace.days_elapsed + pace.days_remaining,
+            "days_elapsed": pace.days_elapsed,
+            "days_remaining": pace.days_remaining,
+            "message": pace.recommendation
+        }] if pace.status.value != "on_track" else [],
+        "period_start": date.today().replace(day=1).isoformat(),
+        "period_end": (date.today().replace(day=1) + timedelta(days=32)).replace(day=1).isoformat()
+    }
+
+
+@router.post("/{budget_id}/pace/snapshot")
+def save_pace_endpoint(
+    budget_id: str = Path(...),
+    category_id: Optional[str] = Query(None)
+) -> dict:
+    """Save a pace snapshot for tracking."""
+    snapshot_id = save_pace_snapshot(budget_id, category_id)
+    if not snapshot_id:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    return {"snapshot_id": snapshot_id}
+
+
+@router.get("/{budget_id}/breakdown")
+def get_breakdown_endpoint(budget_id: str = Path(...)) -> dict:
+    """Get committed vs flexible breakdown for a budget."""
+    breakdown = get_committed_flexible_breakdown(budget_id)
+    return breakdown
+
+
+@router.put("/income/{source_id}")
+def update_income_endpoint(
+    source_id: str = Path(...),
+    user_confirmed: Optional[bool] = None,
+    amount_override: Optional[float] = None,
+    name_override: Optional[str] = None,
+    is_active: Optional[bool] = None
+) -> dict:
+    """Confirm or adjust an income source."""
+    success = update_income_source(
+        source_id,
+        user_confirmed=user_confirmed,
+        user_amount_override=amount_override,
+        user_name_override=name_override,
+        is_active=is_active
+    )
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Income source not found")
+
+    return {"updated": True, "id": source_id}

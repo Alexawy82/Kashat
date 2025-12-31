@@ -20,30 +20,33 @@ interface CategoryData {
   annual_total: number
 }
 
+// API returns by_type as object: {subscription: {count, monthly}, ...}
+// We transform it to array format for rendering
+type ApiByType = Record<string, { count: number; monthly: number }>
+
 interface CategoryOverviewProps {
-  data: {
-    by_type: CategoryData[]
-    total_monthly: number
-    total_annual: number
-  } | null
+  data: ApiByType | null
+  totalMonthly?: number
+  totalAnnual?: number
   isLoading?: boolean
   onCategoryClick?: (category: string) => void
 }
 
+// Keys must match backend API response: subscription, bill, loan, credit_card, insurance, unknown
 const categoryConfig: Record<string, { icon: typeof Tv; label: string; color: string; bgColor: string }> = {
-  subscriptions: {
+  subscription: {
     icon: Tv,
     label: 'Subscriptions',
     color: 'text-purple-600',
     bgColor: 'bg-purple-100',
   },
-  rent_and_utilities: {
+  bill: {
     icon: Home,
-    label: 'Housing & Utilities',
+    label: 'Bills',
     color: 'text-blue-600',
     bgColor: 'bg-blue-100',
   },
-  loan_payments: {
+  loan: {
     icon: Landmark,
     label: 'Loans',
     color: 'text-amber-600',
@@ -107,7 +110,7 @@ function CategoryCard({
   )
 }
 
-export function CategoryOverview({ data, isLoading, onCategoryClick }: CategoryOverviewProps) {
+export function CategoryOverview({ data, totalMonthly, totalAnnual, isLoading, onCategoryClick }: CategoryOverviewProps) {
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -122,12 +125,24 @@ export function CategoryOverview({ data, isLoading, onCategoryClick }: CategoryO
     )
   }
 
-  if (!data || !data.by_type || data.by_type.length === 0) {
+  if (!data || Object.keys(data).length === 0) {
     return null
   }
 
+  // Transform API object to array format
+  const categories: CategoryData[] = Object.entries(data).map(([type, values]) => ({
+    type,
+    count: values.count,
+    monthly_total: values.monthly,
+    annual_total: values.monthly * 12,
+  }))
+
+  // Calculate totals if not provided
+  const calculatedTotalMonthly = totalMonthly ?? categories.reduce((sum, c) => sum + c.monthly_total, 0)
+  const calculatedTotalAnnual = totalAnnual ?? calculatedTotalMonthly * 12
+
   // Sort by monthly total descending
-  const sortedCategories = [...data.by_type].sort((a, b) => b.monthly_total - a.monthly_total)
+  const sortedCategories = categories.sort((a, b) => b.monthly_total - a.monthly_total)
 
   return (
     <div className="space-y-4">
@@ -139,20 +154,20 @@ export function CategoryOverview({ data, isLoading, onCategoryClick }: CategoryO
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Total Monthly Recurring</p>
-            <p className="text-2xl font-bold">{formatAmount(data.total_monthly)}</p>
+            <p className="text-2xl font-bold">{formatAmount(calculatedTotalMonthly)}</p>
           </div>
         </div>
         <div className="text-right">
           <p className="text-sm text-muted-foreground">Annual Projection</p>
-          <p className="text-lg font-semibold text-muted-foreground">{formatAmount(data.total_annual)}</p>
+          <p className="text-lg font-semibold text-muted-foreground">{formatAmount(calculatedTotalAnnual)}</p>
         </div>
       </div>
 
       {/* Category Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {sortedCategories.map((category) => {
-          const percentage = data.total_monthly > 0
-            ? (category.monthly_total / data.total_monthly) * 100
+          const percentage = calculatedTotalMonthly > 0
+            ? (category.monthly_total / calculatedTotalMonthly) * 100
             : 0
 
           return (

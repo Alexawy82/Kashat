@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ...recurring import (
     suggest_recurring, list_recurring, confirm_series, reject_series,
     calculate_series_status, extract_merchant_name_ai, merge_duplicate_merchants,
-    classify_recurring_type, RecurringTypeClassifier, infer_display_name
+    classify_recurring_type, RecurringTypeClassifier, infer_display_name,
+    auto_link_transactions_to_series
 )
 from ...db import get_conn
 from datetime import date, timedelta
@@ -157,7 +160,7 @@ def _enrich_series(rows: list) -> list:
             "annual": "Annual",
         }.get(cadence, cadence.title() if cadence else "Monthly")
 
-        # Status detection (active/overdue/likely_cancelled)
+        # Status detection (active/late/likely_cancelled)
         last_date_str = r.get("last_date")
         next_date_str = r.get("next_date")
         try:
@@ -172,7 +175,7 @@ def _enrich_series(rows: list) -> list:
         status_info = calculate_series_status(last_date_val, next_date_val, cadence)
         r["status"] = status_info["status"]
         r["days_since_last"] = status_info["days_since_last"]
-        r["days_overdue"] = status_info["days_overdue"]
+        r["days_late"] = status_info["days_late"]
         r["missed_payments"] = status_info["missed_payments"]
         r["health_score"] = status_info["health_score"]
 
@@ -1004,15 +1007,15 @@ def get_upcoming_payments(days: int = Query(30, ge=1, le=90)):
     end_date = today + timedelta(days=days)
 
     conn = get_conn()
-    # Fetch all confirmed series with last_date and cadence to calculate next due
+    # Fetch all confirmed series - prefer stored next_date over calculated
     result = conn.execute("""
         SELECT
             rs.id, rs.display_name, rs.name, rs.amount_mean,
-            rs.last_date, rs.cadence, rs.recurring_type, rs.is_essential
+            rs.last_date, rs.cadence, rs.recurring_type, rs.is_essential,
+            rs.next_date
         FROM recurring_series rs
         WHERE rs.status = 'confirmed'
-          AND rs.last_date IS NOT NULL
-          AND rs.cadence IS NOT NULL
+          AND (rs.next_date IS NOT NULL OR (rs.last_date IS NOT NULL AND rs.cadence IS NOT NULL))
     """).fetchall()
 
     upcoming = []
@@ -1024,32 +1027,53 @@ def get_upcoming_payments(days: int = Query(30, ge=1, le=90)):
         cadence = r[5]
         recurring_type = r[6]
         is_essential = r[7]
+        stored_next_date = r[8]
 
-        # Parse last_date
-        try:
-            if isinstance(last_date_str, date):
-                last_date_val = last_date_str
-            elif isinstance(last_date_str, str):
-                last_date_val = date.fromisoformat(last_date_str.split('T')[0])
-            else:
+        # Use stored next_date if available, otherwise calculate from last_date
+        next_due = None
+        if stored_next_date:
+            try:
+                if isinstance(stored_next_date, date):
+                    next_due = stored_next_date
+                elif isinstance(stored_next_date, str):
+                    next_due = date.fromisoformat(stored_next_date.split('T')[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Fall back to calculated date if no stored next_date
+        if not next_due and last_date_str and cadence:
+            try:
+                if isinstance(last_date_str, date):
+                    last_date_val = last_date_str
+                elif isinstance(last_date_str, str):
+                    last_date_val = date.fromisoformat(last_date_str.split('T')[0])
+                else:
+                    continue
+                next_due = calculate_next_due_date(last_date_val, cadence)
+            except (ValueError, TypeError):
                 continue
-        except (ValueError, TypeError):
-            continue
 
-        # Calculate next due date
-        next_due = calculate_next_due_date(last_date_val, cadence)
         if not next_due:
             continue
 
         # Filter to the requested date range
         if next_due >= today and next_due <= end_date:
+            # Normalize type to new format
+            type_map = {
+                "subscriptions": "subscription",
+                "rent_and_utilities": "bill",
+                "loan_payments": "loan",
+            }
+            normalized_type = type_map.get(recurring_type, recurring_type)
+
             upcoming.append({
                 "series_id": series_id,
-                "merchant": display_name,
+                "name": display_name,  # Frontend expects 'name'
+                "merchant": display_name,  # Keep for backwards compat
                 "amount": round(abs(float(amount_mean or 0)), 2),
                 "date": next_due.isoformat(),
                 "cadence": cadence,
-                "type": recurring_type,
+                "type": normalized_type,
                 "is_essential": bool(is_essential),
             })
 
@@ -1327,6 +1351,584 @@ async def confirm_with_learning(series_id: str):
     return result
 
 
+@router.post("/fix-next-dates")
+def fix_all_next_dates():
+    """Recalculate next_date for all active series based on last_date + cadence.
+
+    This fixes stale next_date values that are in the past.
+    Processes both 'confirmed' and 'pending' series.
+    """
+    conn = get_conn()
+    today = date.today()
+
+    rows = conn.execute("""
+        SELECT id, last_date, cadence, anchor_day
+        FROM recurring_series
+        WHERE status IN ('confirmed', 'pending') AND last_date IS NOT NULL
+    """).fetchall()
+
+    updated = 0
+    fixed_details = []
+
+    for row in rows:
+        series_id, last_date_str, cadence, anchor_day = row
+
+        # Parse last_date
+        try:
+            if isinstance(last_date_str, date):
+                last_date_val = last_date_str
+            elif isinstance(last_date_str, str):
+                last_date_val = date.fromisoformat(str(last_date_str)[:10])
+            else:
+                continue
+        except (ValueError, TypeError):
+            continue
+
+        # Calculate next_date by projecting forward until future
+        next_date = calculate_next_due_date(last_date_val, cadence or 'monthly')
+
+        if next_date:
+            conn.execute(
+                "UPDATE recurring_series SET next_date = ? WHERE id = ?",
+                [next_date.isoformat(), series_id]
+            )
+            updated += 1
+            fixed_details.append({
+                "series_id": series_id,
+                "last_date": str(last_date_val),
+                "new_next_date": next_date.isoformat()
+            })
+
+    return {
+        "updated": updated,
+        "message": f"Fixed {updated} series next_date values",
+        "details": fixed_details[:20]  # Return first 20 for verification
+    }
+
+
+@router.post("/normalize-types")
+def normalize_recurring_types():
+    """Normalize Plaid-style recurring types to internal format.
+
+    Converts:
+    - rent_and_utilities → bill
+    - loan_payments → loan
+    - subscriptions → subscription
+    """
+    conn = get_conn()
+
+    # Define normalizations
+    normalizations = [
+        ("rent_and_utilities", "bill"),
+        ("loan_payments", "loan"),
+        ("subscriptions", "subscription"),
+    ]
+
+    total_updated = 0
+    details = []
+
+    for old_type, new_type in normalizations:
+        result = conn.execute(
+            "UPDATE recurring_series SET recurring_type = ? WHERE recurring_type = ?",
+            [new_type, old_type]
+        )
+        count = result.rowcount
+        total_updated += count
+        if count > 0:
+            details.append({"from": old_type, "to": new_type, "count": count})
+
+    return {
+        "updated": total_updated,
+        "message": f"Normalized {total_updated} series",
+        "details": details
+    }
+
+
+@router.get("/detect-cancelled")
+def detect_cancelled_services():
+    """Detect recurring services that appear to have been cancelled.
+
+    Uses intelligence based on:
+    - Number of missed expected payments (missed_cycles)
+    - Time since last transaction vs expected cadence
+
+    Rules:
+    - If missed_cycles >= 2, flag as likely cancelled
+    - Weekly: no payment in 3+ weeks
+    - Biweekly: no payment in 5+ weeks
+    - Monthly: no payment in 2+ months
+    - Quarterly: no payment in 6+ months
+    - Annual: no payment in 14+ months
+    """
+    conn = get_conn()
+    today = date.today()
+
+    # Cadence to days mapping
+    cadence_days = {
+        'weekly': 7,
+        'biweekly': 14,
+        'monthly': 30,
+        'quarterly': 91,
+        'semi_annual': 182,
+        'annual': 365,
+    }
+
+    rows = conn.execute("""
+        SELECT id, name, display_name, last_date, cadence, recurring_type, amount_mean, status
+        FROM recurring_series
+        WHERE status IN ('confirmed', 'pending')
+          AND last_date IS NOT NULL
+        ORDER BY last_date
+    """).fetchall()
+
+    likely_cancelled = []
+    still_active = []
+
+    for row in rows:
+        series_id, name, display_name, last_date_str, cadence, rec_type, amount, status = row
+
+        # Parse last_date
+        try:
+            if isinstance(last_date_str, date):
+                last_date_val = last_date_str
+            else:
+                last_date_val = date.fromisoformat(str(last_date_str)[:10])
+        except (ValueError, TypeError):
+            continue
+
+        days_since = (today - last_date_val).days
+        cadence_interval = cadence_days.get(cadence, 30)
+        missed_cycles = days_since / cadence_interval
+
+        series_info = {
+            "id": series_id,
+            "name": display_name or name,
+            "last_date": last_date_val.isoformat(),
+            "days_since": days_since,
+            "cadence": cadence,
+            "missed_cycles": round(missed_cycles, 1),
+            "amount": abs(float(amount or 0)),
+            "recurring_type": rec_type,
+            "status": status,
+        }
+
+        # Flag as likely cancelled if 2+ cycles missed
+        if missed_cycles >= 2:
+            series_info["reason"] = f"No payment in {days_since} days ({missed_cycles:.1f} missed {cadence} cycles)"
+            likely_cancelled.append(series_info)
+        else:
+            still_active.append(series_info)
+
+    return {
+        "likely_cancelled": likely_cancelled,
+        "likely_cancelled_count": len(likely_cancelled),
+        "still_active_count": len(still_active),
+        "total_analyzed": len(rows),
+        "note": "Review 'likely_cancelled' items and use POST /recurring/{id}/cancel to mark as cancelled"
+    }
+
+
+@router.post("/{series_id}/cancel")
+def cancel_series(series_id: str):
+    """Mark a recurring series as cancelled.
+
+    Sets status to 'cancelled' so it no longer appears in bills/calendar.
+    """
+    conn = get_conn()
+
+    # Verify series exists
+    row = conn.execute(
+        "SELECT name, display_name, status FROM recurring_series WHERE id = ?",
+        [series_id]
+    ).fetchone()
+
+    if not row:
+        return {"error": "Series not found", "id": series_id}
+
+    if row[2] == 'cancelled':
+        return {"message": "Already cancelled", "id": series_id, "name": row[1] or row[0]}
+
+    conn.execute(
+        "UPDATE recurring_series SET status = 'cancelled' WHERE id = ?",
+        [series_id]
+    )
+
+    return {
+        "message": "Series cancelled",
+        "id": series_id,
+        "name": row[1] or row[0]
+    }
+
+
+@router.post("/bulk-cancel")
+def bulk_cancel_series(series_ids: list[str]):
+    """Cancel multiple recurring series at once."""
+    conn = get_conn()
+
+    cancelled = []
+    errors = []
+
+    for series_id in series_ids:
+        row = conn.execute(
+            "SELECT name, display_name FROM recurring_series WHERE id = ?",
+            [series_id]
+        ).fetchone()
+
+        if not row:
+            errors.append({"id": series_id, "error": "Not found"})
+            continue
+
+        conn.execute(
+            "UPDATE recurring_series SET status = 'cancelled' WHERE id = ?",
+            [series_id]
+        )
+        cancelled.append({"id": series_id, "name": row[1] or row[0]})
+
+    return {
+        "cancelled": cancelled,
+        "cancelled_count": len(cancelled),
+        "errors": errors
+    }
+
+
+@router.post("/auto-cancel-detected")
+def auto_cancel_detected():
+    """Detect and auto-cancel recurring services that appear to have been cancelled.
+
+    Uses the detect-cancelled logic (missed_cycles >= 2) to find likely cancelled
+    services and marks them as cancelled.
+
+    Returns the list of cancelled items and savings info.
+    """
+    conn = get_conn()
+    today = date.today()
+
+    cadence_days = {
+        'weekly': 7,
+        'biweekly': 14,
+        'monthly': 30,
+        'quarterly': 91,
+        'semiannual': 182,
+        'annual': 365,
+    }
+
+    # Get all confirmed/pending series
+    rows = conn.execute("""
+        SELECT id, name, display_name, cadence, last_date, amount_mean
+        FROM recurring_series
+        WHERE status IN ('confirmed', 'pending')
+        AND last_date IS NOT NULL
+    """).fetchall()
+
+    cancelled = []
+    total_monthly_savings = 0.0
+
+    cadence_multipliers = {
+        'weekly': 4.33,
+        'biweekly': 2.17,
+        'monthly': 1,
+        'quarterly': 0.33,
+        'semiannual': 0.167,
+        'annual': 0.083,
+    }
+
+    for row in rows:
+        series_id = row[0]
+        name = row[1] or row[2]
+        cadence = row[3] or 'monthly'
+        last_date_str = row[4]
+        amount = abs(row[5] or 0)
+
+        if not last_date_str:
+            continue
+
+        last_dt = date.fromisoformat(last_date_str)
+        days_since = (today - last_dt).days
+        cadence_interval = cadence_days.get(cadence, 30)
+        missed_cycles = days_since / cadence_interval
+
+        # If 2+ cycles missed, mark as cancelled
+        if missed_cycles >= 2:
+            conn.execute(
+                "UPDATE recurring_series SET status = 'cancelled' WHERE id = ?",
+                [series_id]
+            )
+
+            monthly_amount = amount * cadence_multipliers.get(cadence, 1)
+            total_monthly_savings += monthly_amount
+
+            cancelled.append({
+                "id": series_id,
+                "name": name,
+                "amount": round(amount, 2),
+                "cadence": cadence,
+                "missed_cycles": round(missed_cycles, 1),
+                "monthly_equivalent": round(monthly_amount, 2),
+            })
+
+    return {
+        "cancelled": cancelled,
+        "cancelled_count": len(cancelled),
+        "monthly_savings": round(total_monthly_savings, 2),
+        "annual_savings": round(total_monthly_savings * 12, 2),
+        "message": f"Auto-cancelled {len(cancelled)} inactive recurring series"
+    }
+
+
+@router.post("/auto-link")
+def auto_link_transactions():
+    """Auto-link unlinked transactions to existing recurring series.
+
+    Finds transactions that match existing series by merchant pattern
+    but aren't linked yet. Updates last_date for affected series.
+
+    Should be called after importing new transactions to keep
+    recurring series up-to-date.
+    """
+    result = auto_link_transactions_to_series()
+    return result
+
+
+@router.post("/cleanup-duplicates")
+def cleanup_duplicate_series():
+    """Find and remove duplicate recurring series by merchant.
+
+    Keeps the series with the most recent last_date for each merchant,
+    deletes older duplicates.
+    """
+    conn = get_conn()
+
+    # Find duplicates: same display_name (case-insensitive) and status=confirmed
+    duplicates = conn.execute("""
+        SELECT
+            LOWER(COALESCE(display_name, name)) as merchant_key,
+            GROUP_CONCAT(id) as ids,
+            COUNT(*) as cnt
+        FROM recurring_series
+        WHERE status = 'confirmed'
+        GROUP BY LOWER(COALESCE(display_name, name))
+        HAVING COUNT(*) > 1
+    """).fetchall()
+
+    deleted_count = 0
+    deleted_ids = []
+
+    for dup in duplicates:
+        merchant_key, ids_str, count = dup
+        ids = ids_str.split(',')
+
+        # Get details for each duplicate to pick the best one
+        series_data = conn.execute(f"""
+            SELECT id, last_date, occurrences, amount_mean
+            FROM recurring_series
+            WHERE id IN ({','.join(['?'] * len(ids))})
+            ORDER BY last_date DESC NULLS LAST, occurrences DESC
+        """, ids).fetchall()
+
+        if len(series_data) > 1:
+            # Keep the first (most recent), delete the rest
+            keep_id = series_data[0][0]
+            for row in series_data[1:]:
+                delete_id = row[0]
+                # Get transactions from the duplicate series
+                dup_txs = conn.execute(
+                    "SELECT tx_id FROM recurring_tx WHERE series_id = ?",
+                    [delete_id]
+                ).fetchall()
+
+                for tx_row in dup_txs:
+                    tx_id = tx_row[0]
+                    # Check if this tx is already linked to the kept series
+                    exists = conn.execute(
+                        "SELECT 1 FROM recurring_tx WHERE series_id = ? AND tx_id = ?",
+                        [keep_id, tx_id]
+                    ).fetchone()
+                    if not exists:
+                        # Move the transaction to the kept series
+                        conn.execute(
+                            "UPDATE recurring_tx SET series_id = ? WHERE series_id = ? AND tx_id = ?",
+                            [keep_id, delete_id, tx_id]
+                        )
+                    else:
+                        # Already exists, just delete the duplicate link
+                        conn.execute(
+                            "DELETE FROM recurring_tx WHERE series_id = ? AND tx_id = ?",
+                            [delete_id, tx_id]
+                        )
+
+                # Delete the duplicate series
+                conn.execute("DELETE FROM recurring_series WHERE id = ?", [delete_id])
+                deleted_count += 1
+                deleted_ids.append({"deleted": delete_id, "kept": keep_id, "merchant": merchant_key})
+
+    return {
+        "deleted": deleted_count,
+        "message": f"Removed {deleted_count} duplicate series",
+        "details": deleted_ids
+    }
+
+
+@router.post("/{series_id}/mark-paid")
+def mark_series_paid(series_id: str):
+    """Mark a recurring series as paid for the current period.
+
+    Updates the last_date to today and recalculates next_date based on cadence.
+    """
+    conn = get_conn()
+    today = date.today()
+
+    # Get current series info
+    row = conn.execute("""
+        SELECT cadence FROM recurring_series WHERE id = ?
+    """, [series_id]).fetchone()
+
+    if not row:
+        return {"error": "Series not found", "success": False}
+
+    cadence = row[0] or "monthly"
+    next_due = calculate_next_due_date(today, cadence)
+
+    # Update last_date and next_date
+    conn.execute("""
+        UPDATE recurring_series
+        SET last_date = ?, next_date = ?
+        WHERE id = ?
+    """, [today.isoformat(), next_due.isoformat() if next_due else None, series_id])
+
+    return {
+        "success": True,
+        "series_id": series_id,
+        "marked_paid_date": today.isoformat(),
+        "next_due_date": next_due.isoformat() if next_due else None,
+    }
+
+
+@router.post("/{series_id}/skip-next")
+def skip_next_payment(series_id: str):
+    """Skip the next scheduled payment and advance next_date by one cycle.
+
+    Useful when you've already paid outside the system or want to skip a payment.
+    """
+    conn = get_conn()
+
+    # Get current series info
+    row = conn.execute("""
+        SELECT cadence, next_date, name, merchant FROM recurring_series WHERE id = ?
+    """, [series_id]).fetchone()
+
+    if not row:
+        return {"error": "Series not found", "success": False}
+
+    cadence = row[0] or "monthly"
+    current_next = row[1]
+    name = row[2] or row[3]
+
+    # Calculate next date from current next_date (skip one cycle)
+    if current_next:
+        base_date = date.fromisoformat(current_next)
+    else:
+        base_date = date.today()
+
+    new_next = calculate_next_due_date(base_date, cadence)
+
+    # Update next_date
+    conn.execute("""
+        UPDATE recurring_series SET next_date = ? WHERE id = ?
+    """, [new_next.isoformat() if new_next else None, series_id])
+
+    return {
+        "success": True,
+        "series_id": series_id,
+        "name": name,
+        "skipped_date": current_next,
+        "new_next_date": new_next.isoformat() if new_next else None,
+        "message": f"Skipped payment, next due: {new_next.isoformat() if new_next else 'unknown'}"
+    }
+
+
+@router.post("/{series_id}/pause")
+def pause_series(series_id: str):
+    """Pause a recurring series temporarily.
+
+    Sets status to 'paused'. The series won't appear in bills/calendar until resumed.
+    """
+    conn = get_conn()
+
+    row = conn.execute("""
+        SELECT name, merchant, status FROM recurring_series WHERE id = ?
+    """, [series_id]).fetchone()
+
+    if not row:
+        return {"error": "Series not found", "success": False}
+
+    name = row[0] or row[1]
+    current_status = row[2]
+
+    if current_status == 'paused':
+        return {"message": "Already paused", "success": True, "id": series_id, "name": name}
+
+    conn.execute("""
+        UPDATE recurring_series SET status = 'paused' WHERE id = ?
+    """, [series_id])
+
+    return {
+        "success": True,
+        "series_id": series_id,
+        "name": name,
+        "previous_status": current_status,
+        "new_status": "paused",
+        "message": f"'{name}' has been paused"
+    }
+
+
+@router.post("/{series_id}/resume")
+def resume_series(series_id: str):
+    """Resume a paused recurring series.
+
+    Sets status back to 'confirmed' and recalculates next_date if needed.
+    """
+    conn = get_conn()
+
+    row = conn.execute("""
+        SELECT name, merchant, status, cadence, last_date FROM recurring_series WHERE id = ?
+    """, [series_id]).fetchone()
+
+    if not row:
+        return {"error": "Series not found", "success": False}
+
+    name = row[0] or row[1]
+    current_status = row[2]
+    cadence = row[3] or "monthly"
+    last_date_str = row[4]
+
+    if current_status != 'paused':
+        return {"message": f"Series is not paused (status: {current_status})", "success": False}
+
+    # Recalculate next_date from last_date
+    today = date.today()
+    if last_date_str:
+        last_dt = date.fromisoformat(last_date_str)
+        next_dt = calculate_next_due_date(last_dt, cadence)
+        # Project forward if next_date is in the past
+        while next_dt and next_dt < today:
+            next_dt = calculate_next_due_date(next_dt, cadence)
+    else:
+        next_dt = calculate_next_due_date(today, cadence)
+
+    conn.execute("""
+        UPDATE recurring_series SET status = 'confirmed', next_date = ? WHERE id = ?
+    """, [next_dt.isoformat() if next_dt else None, series_id])
+
+    return {
+        "success": True,
+        "series_id": series_id,
+        "name": name,
+        "new_status": "confirmed",
+        "next_date": next_dt.isoformat() if next_dt else None,
+        "message": f"'{name}' has been resumed"
+    }
+
+
 @router.post("/reject/{series_id}/with-learning")
 async def reject_with_learning(series_id: str, reason: Optional[str] = None):
     """Reject a recurring series AND learn from it.
@@ -1362,3 +1964,317 @@ async def reject_with_learning(series_id: str, reason: Optional[str] = None):
         pass
 
     return result
+
+
+# =============================================================================
+# Data Quality & Maintenance Endpoints
+# =============================================================================
+
+@router.post("/reclassify-all")
+def reclassify_all_series():
+    """Reclassify all recurring series using the latest pattern matching.
+
+    This re-runs classify_recurring_type() on all series and updates:
+    - recurring_type
+    - sub_category
+    - is_essential
+
+    Useful after updating classification patterns.
+    """
+    conn = get_conn()
+
+    rows = conn.execute("""
+        SELECT id, name, display_name, amount_mean, recurring_type, sub_category
+        FROM recurring_series
+        WHERE status IN ('pending', 'confirmed')
+    """).fetchall()
+
+    updated = []
+    unchanged = []
+
+    for row in rows:
+        series_id = row[0]
+        name = row[1]
+        display_name = row[2]
+        amount = float(row[3] or 0)
+        old_type = row[4]
+        old_sub = row[5]
+
+        # Try display_name first, then raw name
+        desc = display_name or name or ""
+        result = classify_recurring_type(desc, amount)
+
+        # Fall back to raw name if unknown
+        if result["recurring_type"] == "unknown" and display_name and name and display_name != name:
+            result = classify_recurring_type(name, amount)
+
+        new_type = result["recurring_type"]
+        new_sub = result["sub_category"]
+        is_essential = result.get("is_essential", False)
+
+        # Only update if something changed
+        if new_type != old_type or new_sub != old_sub:
+            conn.execute("""
+                UPDATE recurring_series
+                SET recurring_type = ?, sub_category = ?, is_essential = ?
+                WHERE id = ?
+            """, [new_type, new_sub, 1 if is_essential else 0, series_id])
+
+            updated.append({
+                "id": series_id,
+                "name": display_name or name,
+                "old_type": old_type,
+                "new_type": new_type,
+                "old_sub": old_sub,
+                "new_sub": new_sub,
+            })
+        else:
+            unchanged.append(series_id)
+
+    return {
+        "updated_count": len(updated),
+        "unchanged_count": len(unchanged),
+        "updated": updated,
+        "message": f"Reclassified {len(updated)} series, {len(unchanged)} unchanged"
+    }
+
+
+# False positive patterns - things that are NOT actually recurring subscriptions
+FALSE_POSITIVE_PATTERNS = [
+    # Gas stations / convenience stores
+    r"sheetz",
+    r"wawa",
+    r"7[-\s]?eleven",
+    r"circle\s*k",
+    r"speedway",
+    r"quiktrip",
+    r"racetrac",
+    r"pilot\s*flying",
+    r"loves\s*travel",
+    r"bp\s+\d",
+    r"shell\s+\d",
+    r"exxon",
+    r"chevron",
+    r"marathon\s+gas",
+    # Tobacco / vape
+    r"tobacco",
+    r"smoke\s*shop",
+    r"vape",
+    r"cigar",
+    # Fast food (unless it's delivery subscription)
+    r"mcdonald",
+    r"burger\s*king",
+    r"wendy'?s",
+    r"taco\s*bell",
+    r"chick[-\s]?fil[-\s]?a",
+    r"popeyes",
+    r"kfc",
+    r"arby'?s",
+    r"sonic\s*drive",
+    r"jack\s*in\s*the\s*box",
+    # Generic retail stores
+    r"dollar\s*(general|tree)",
+    r"family\s*dollar",
+    r"big\s*lots",
+    # Restaurants (generic, not recurring)
+    r"restaurant\s*\d",
+    r"pizz",  # Pizza places
+]
+
+
+@router.post("/cleanup-false-positives")
+def cleanup_false_positives():
+    """Identify and reject series that are likely false positives.
+
+    Matches against known non-recurring patterns like:
+    - Gas stations (Sheetz, Wawa, etc.)
+    - Fast food restaurants
+    - Convenience stores
+    - Tobacco shops
+
+    Does NOT auto-reject - returns list for review with option to confirm.
+    """
+    conn = get_conn()
+
+    rows = conn.execute("""
+        SELECT id, name, display_name, amount_mean, cadence, occurrences, status
+        FROM recurring_series
+        WHERE status IN ('pending', 'confirmed')
+    """).fetchall()
+
+    flagged = []
+
+    for row in rows:
+        series_id = row[0]
+        name = (row[1] or "").lower()
+        display_name = (row[2] or "").lower()
+        amount = abs(row[3] or 0)
+        cadence = row[4]
+        occurrences = row[5] or 0
+        status = row[6]
+
+        desc = display_name or name
+
+        # Check against false positive patterns
+        for pattern in FALSE_POSITIVE_PATTERNS:
+            if re.search(pattern, desc, re.I):
+                flagged.append({
+                    "id": series_id,
+                    "name": row[2] or row[1],
+                    "matched_pattern": pattern,
+                    "amount": round(amount, 2),
+                    "cadence": cadence,
+                    "occurrences": occurrences,
+                    "status": status,
+                })
+                break
+
+    return {
+        "flagged_count": len(flagged),
+        "flagged": flagged,
+        "message": f"Found {len(flagged)} likely false positives. Use /reject-bulk to remove them."
+    }
+
+
+@router.post("/reject-false-positives")
+def reject_false_positives():
+    """Auto-reject all identified false positives.
+
+    Runs cleanup-false-positives logic and rejects all matched series.
+    """
+    conn = get_conn()
+
+    rows = conn.execute("""
+        SELECT id, name, display_name
+        FROM recurring_series
+        WHERE status IN ('pending', 'confirmed')
+    """).fetchall()
+
+    rejected = []
+
+    for row in rows:
+        series_id = row[0]
+        name = (row[1] or "").lower()
+        display_name = (row[2] or "").lower()
+        desc = display_name or name
+
+        for pattern in FALSE_POSITIVE_PATTERNS:
+            if re.search(pattern, desc, re.I):
+                conn.execute(
+                    "UPDATE recurring_series SET status = 'rejected' WHERE id = ?",
+                    [series_id]
+                )
+                rejected.append({
+                    "id": series_id,
+                    "name": row[2] or row[1],
+                    "matched_pattern": pattern,
+                })
+                break
+
+    return {
+        "rejected_count": len(rejected),
+        "rejected": rejected,
+        "message": f"Rejected {len(rejected)} false positives"
+    }
+
+
+# =============================================================================
+# Consolidated Enriched Endpoint
+# =============================================================================
+
+@router.get("/all-enriched")
+def get_all_enriched():
+    """Get all recurring data in a single consolidated response.
+
+    Returns:
+    - all: All confirmed series
+    - by_type: Series grouped by normalized type
+    - summary: Counts and totals per type
+    - pending_count: Number of pending suggestions
+
+    This consolidates 6+ API calls into 1, reducing frontend overhead.
+    """
+    # Get all confirmed
+    all_rows = list_recurring(status="confirmed")
+    enriched = _enrich_series(all_rows)
+
+    # Get pending count
+    pending_rows = list_recurring(status="pending")
+    pending_count = len(pending_rows)
+
+    # Group by type
+    by_type = {
+        "subscription": [],
+        "bill": [],
+        "loan": [],
+        "credit_card": [],
+        "insurance": [],
+        "unknown": [],
+    }
+
+    # Summary accumulators
+    summary = {
+        "total_count": 0,
+        "total_monthly": 0.0,
+        "essential_monthly": 0.0,
+        "discretionary_monthly": 0.0,
+        "by_type": {},
+    }
+
+    cadence_multipliers = {
+        "weekly": 4.33,
+        "biweekly": 2.17,
+        "monthly": 1.0,
+        "quarterly": 0.33,
+        "semiannual": 0.167,
+        "annual": 0.083,
+    }
+
+    for item in enriched:
+        rec_type = item.get("recurring_type", "unknown")
+        amount = abs(float(item.get("amount_mean") or 0))
+        cadence = item.get("cadence", "monthly")
+        is_essential = item.get("is_essential", False)
+
+        # Calculate monthly equivalent
+        multiplier = cadence_multipliers.get(cadence, 1.0)
+        monthly = amount * multiplier
+        item["monthly_equivalent"] = round(monthly, 2)
+
+        # Add to type bucket
+        if rec_type in by_type:
+            by_type[rec_type].append(item)
+        else:
+            by_type["unknown"].append(item)
+
+        # Update summary
+        summary["total_count"] += 1
+        summary["total_monthly"] += monthly
+        if is_essential:
+            summary["essential_monthly"] += monthly
+        else:
+            summary["discretionary_monthly"] += monthly
+
+        # Per-type summary
+        if rec_type not in summary["by_type"]:
+            summary["by_type"][rec_type] = {"count": 0, "monthly": 0.0}
+        summary["by_type"][rec_type]["count"] += 1
+        summary["by_type"][rec_type]["monthly"] += monthly
+
+    # Round summary values
+    summary["total_monthly"] = round(summary["total_monthly"], 2)
+    summary["essential_monthly"] = round(summary["essential_monthly"], 2)
+    summary["discretionary_monthly"] = round(summary["discretionary_monthly"], 2)
+    for t in summary["by_type"]:
+        summary["by_type"][t]["monthly"] = round(summary["by_type"][t]["monthly"], 2)
+
+    # Sort each type by amount
+    for t in by_type:
+        by_type[t].sort(key=lambda x: abs(float(x.get("amount_mean") or 0)), reverse=True)
+
+    return {
+        "all": enriched,
+        "by_type": by_type,
+        "summary": summary,
+        "pending_count": pending_count,
+    }

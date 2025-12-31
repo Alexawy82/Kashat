@@ -1,35 +1,62 @@
 import io
 import csv
 import unittest
+import importlib
 from datetime import date, datetime, timedelta, UTC
 
 from fastapi.testclient import TestClient
 import os
 import tempfile
 
-from kashat.api.main import app
-from kashat.db import get_conn
-
 
 class TestAnalyticsAndExportEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Isolate DB per test class
+        # Set env var BEFORE importing app to ensure correct DB isolation
         cls.tmpdir = tempfile.mkdtemp(prefix="ll_test_")
         os.environ["LEDGERLOOP_DATA_DIR"] = cls.tmpdir
+
+        # Fully reset the database module - reload to ensure fresh state
+        # This is necessary because other tests may have reloaded the module
+        import kashat.db as dbmod
+        dbmod.close()  # Close any existing connection
+        importlib.reload(dbmod)  # Reload to get fresh module state
+
+        # Reload the analytics routes module which caches get_conn references
+        import kashat.api.routes.analytics as analytics_mod
+        importlib.reload(analytics_mod)
+        import kashat.api.routes.export as export_mod
+        importlib.reload(export_mod)
+
+        # Import create_app AFTER setting env var and reloading db module
+        import kashat.api
+        importlib.reload(kashat.api)  # Reload to pick up fresh db module
+        from kashat.api import create_app
+        app = create_app()
         cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        import kashat.db as dbmod
+        dbmod.close()
 
     def setUp(self):
         # Reset minimal tables for a clean slate on a fresh DB
+        from kashat.db import get_conn
         conn = get_conn()
         for t in (
             "event_log",
             "match_transfer",
             "transaction_category",
-            "transaction",
+            "transaction_tag",
+            "transaction_ingest",
+            "recurring_tx",
+            '"transaction"',
             "category",
             "recurring_series",
-            "recurring_tx",
+            "account",
+            "import_file",
+            "import_run",
         ):
             try:
                 conn.execute(f"DELETE FROM {t}")
@@ -54,7 +81,7 @@ class TestAnalyticsAndExportEndpoints(unittest.TestCase):
         ]
         for rid, acc, d, amt, curr, desc in rows:
             conn.execute(
-                "INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, fingerprint, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                'INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, fingerprint, created_at) VALUES (?,?,?,?,?,?,?,?)',
                 [rid, acc, d, amt, curr, desc, f"fp_{rid}", datetime.now(UTC)],
             )
         # Categorize some

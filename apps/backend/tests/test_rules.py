@@ -59,7 +59,7 @@ def test_apply_all_rules_assigns_category(db_conn, seed_transactions, sample_tra
     assert row[0] == "cat1"
 
     is_business = db_conn.execute(
-        "SELECT is_business FROM transaction WHERE id = 't1'"
+        'SELECT is_business FROM "transaction" WHERE id = \'t1\''
     ).fetchone()[0]
     assert bool(is_business) is True
 

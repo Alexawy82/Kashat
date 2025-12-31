@@ -35,7 +35,7 @@ def export_transactions(
         where.append("t.account_id = ?")
         params.append(account_id)
     wh = " WHERE " + " AND ".join(where) if where else ""
-    rows = conn.execute(
+    cursor = conn.execute(
         f"""
         SELECT t.id, t.account_id, t.posted_at, t.amount, t.currency, t.description_norm,
                tc.category_id, c.name AS category_name,
@@ -50,7 +50,7 @@ def export_transactions(
         ORDER BY t.posted_at
         """,
         params,
-    ).fetchall()
+    )
     cols = [c[0] for c in conn.description]
     def _iter():
         buf = StringIO()
@@ -58,7 +58,7 @@ def export_transactions(
         writer.writerow(cols)
         yield buf.getvalue()
         buf.seek(0); buf.truncate(0)
-        for r in rows:
+        for r in cursor:
             writer.writerow(r)
             yield buf.getvalue()
             buf.seek(0); buf.truncate(0)
@@ -92,7 +92,21 @@ def export_csv(
 
     wh = (" WHERE " + " AND ".join(where)) if where else ""
 
-    rows = conn.execute(
+    count_row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM [transaction] t
+        LEFT JOIN transaction_category tc ON t.id = tc.tx_id
+        LEFT JOIN category c ON tc.category_id = c.id
+        LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
+        LEFT JOIN recurring_tx rtx ON rtx.tx_id = t.id
+        {wh}
+        """,
+        params,
+    ).fetchone()
+    total_rows = int(count_row[0] or 0) if count_row else 0
+
+    cursor = conn.execute(
         f"""
         SELECT t.id, t.account_id, t.posted_at, t.amount, t.currency, t.description_norm,
                tc.category_id, c.name AS category_name,
@@ -108,7 +122,7 @@ def export_csv(
         ORDER BY t.posted_at
         """,
         params,
-    ).fetchall()
+    )
     cols = [c[0] for c in conn.description]
 
     # Log to event_log (redact free-text)
@@ -118,7 +132,7 @@ def export_csv(
             "to": str(end_date) if end_date else None,
             "onlyBusiness": only_business,
             "includeTransfers": include_transfers,
-            "rowCount": len(rows),
+            "rowCount": total_rows,
         }
         conn.execute(
             "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -142,7 +156,7 @@ def export_csv(
         writer.writerow(cols)
         yield buf.getvalue()
         buf.seek(0); buf.truncate(0)
-        for r in rows:
+        for r in cursor:
             writer.writerow(r)
             yield buf.getvalue()
             buf.seek(0); buf.truncate(0)

@@ -356,9 +356,9 @@ def calculate_series_status(
 
     Returns:
         {
-            "status": "active" | "overdue" | "likely_cancelled",
+            "status": "active" | "late" | "likely_cancelled",
             "days_since_last": int,
-            "days_overdue": int | None,
+            "days_late": int | None,
             "missed_payments": int,
             "health_score": float (0-1)
         }
@@ -370,7 +370,7 @@ def calculate_series_status(
         return {
             "status": "unknown",
             "days_since_last": None,
-            "days_overdue": None,
+            "days_late": None,
             "missed_payments": 0,
             "health_score": 0.5,
         }
@@ -390,28 +390,28 @@ def calculate_series_status(
     if days_until_next >= -grace_period:
         # Payment is on time or within grace period
         status = "active"
-        days_overdue = None
+        days_late = None
         missed_payments = 0
         health_score = 1.0
     else:
-        # Payment is overdue
-        days_overdue = abs(days_until_next)
-        missed_payments = max(1, int(days_overdue / expected_interval))
+        # Payment is late
+        days_late = abs(days_until_next)
+        missed_payments = max(1, int(days_late / expected_interval))
 
         if missed_payments >= 3:
             status = "likely_cancelled"
             health_score = 0.1
         elif missed_payments >= 2:
-            status = "overdue"
+            status = "late"
             health_score = 0.3
         else:
-            status = "overdue"
+            status = "late"
             health_score = 0.6
 
     return {
         "status": status,
         "days_since_last": days_since,
-        "days_overdue": days_overdue,
+        "days_late": days_late,
         "missed_payments": missed_payments,
         "health_score": health_score,
     }
@@ -938,8 +938,31 @@ def classify_recurring_type(description: str, amount: float = 0.0, use_llm: bool
 
 
 def _series_key_raw(name: str | None, cadence: str | None, amount_mean: float | None) -> str:
-    cents = int(round(float(amount_mean or 0.0) * 100.0))
-    return f"{(name or '').strip()}|{(cadence or '').strip()}|{cents}"
+    """Generate a stable key for deduplication.
+
+    Uses amount buckets instead of exact cents to handle price changes:
+    - <$10: $1 buckets
+    - $10-100: $5 buckets
+    - $100-500: $25 buckets
+    - $500+: $100 buckets
+
+    Also normalizes the name more aggressively.
+    """
+    # Normalize name: lowercase, strip, remove extra whitespace
+    norm_name = " ".join((name or "").lower().split())
+
+    # Amount bucketing to handle price changes
+    amt = abs(float(amount_mean or 0.0))
+    if amt < 10:
+        bucket = int(amt)  # $1 buckets
+    elif amt < 100:
+        bucket = int(amt / 5) * 5  # $5 buckets
+    elif amt < 500:
+        bucket = int(amt / 25) * 25  # $25 buckets
+    else:
+        bucket = int(amt / 100) * 100  # $100 buckets
+
+    return f"{norm_name}|{(cadence or '').strip()}|{bucket}"
 
 
 def compute_series_key(name: str | None, cadence: str | None, amount_mean: float | None) -> str:
@@ -1283,6 +1306,16 @@ def suggest_recurring(
         )
     """
 
+    # DEDUP: Exclude transactions already linked to CONFIRMED recurring series
+    # This prevents re-detecting patterns that user already confirmed
+    confirmed_exclusion = """
+        AND t.id NOT IN (
+            SELECT rt.tx_id FROM recurring_tx rt
+            JOIN recurring_series rs ON rs.id = rt.series_id
+            WHERE rs.status = 'confirmed'
+        )
+    """
+
     if allow_short_cadence:
         # More permissive query for short cadence detection
         rows = conn.execute(
@@ -1295,6 +1328,7 @@ def suggest_recurring(
               AND t.p2p_provider IS NULL
               AND NOT regexp_matches(lower(t.description_norm), '(online banking transfer|automatic transfer)')
               {p2p_exclusion}
+              {confirmed_exclusion}
             LIMIT ?
             """,
             [limit],
@@ -1320,6 +1354,7 @@ def suggest_recurring(
                 OR regexp_matches(lower(t.description_norm), '(subscription|recurring|autopay|auto pay|mortgage|insurance|premium|membership|duke|energy|electric|water|spectrum|fiber|internet|netflix|spotify|hulu|apple\\.com/bill|google\\s*\\*)')
               )
               {p2p_exclusion}
+              {confirmed_exclusion}
             LIMIT ?
             """,
             [limit],
@@ -1625,3 +1660,89 @@ def reject_series(series_id: str) -> Dict[str, str]:
     except Exception:
         pass  # Event logging is non-critical
     return {"id": series_id, "status": "rejected"}
+
+
+def auto_link_transactions_to_series() -> Dict:
+    """Auto-link unlinked transactions to existing recurring series.
+
+    This finds transactions that match existing series by merchant pattern
+    but aren't linked yet, and links them. Also updates last_date.
+
+    Should be called after importing new transactions.
+    """
+    from .db import get_conn
+
+    conn = get_conn()
+    linked_count = 0
+    updated_series = []
+
+    # Get all active recurring series with their merchant patterns
+    series_rows = conn.execute("""
+        SELECT id, name, display_name, last_date
+        FROM recurring_series
+        WHERE status IN ('confirmed', 'pending')
+    """).fetchall()
+
+    for series_id, name, display_name, last_date in series_rows:
+        # Build search patterns from the merchant name
+        # Use the core merchant identifier (first few words)
+        search_name = (display_name or name or "").lower()
+
+        # Extract key merchant identifier (remove location suffixes, etc.)
+        # e.g., "google *fi k6t mountain viewca" -> "google *fi"
+        # e.g., "roadrunner fina" -> "roadrunner"
+        parts = search_name.split()
+        if len(parts) >= 2:
+            # Use first 2 parts as the core pattern
+            core_pattern = f"%{parts[0]}%{parts[1]}%"
+        elif len(parts) == 1:
+            core_pattern = f"%{parts[0]}%"
+        else:
+            continue
+
+        # Find unlinked transactions matching this pattern
+        unlinked = conn.execute("""
+            SELECT t.id, t.posted_at
+            FROM [transaction] t
+            WHERE LOWER(t.description_norm) LIKE ?
+              AND t.id NOT IN (SELECT tx_id FROM recurring_tx WHERE series_id = ?)
+              AND t.amount < 0  -- Only expenses for recurring bills
+            ORDER BY t.posted_at DESC
+        """, [core_pattern, series_id]).fetchall()
+
+        if unlinked:
+            for tx_id, tx_date in unlinked:
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO recurring_tx (series_id, tx_id) VALUES (?, ?)",
+                        [series_id, tx_id]
+                    )
+                    linked_count += 1
+                except Exception:
+                    pass
+
+            # Update last_date to most recent linked transaction
+            max_date = conn.execute("""
+                SELECT MAX(t.posted_at)
+                FROM recurring_tx rt
+                JOIN [transaction] t ON t.id = rt.tx_id
+                WHERE rt.series_id = ?
+            """, [series_id]).fetchone()[0]
+
+            if max_date and (not last_date or max_date > str(last_date)):
+                conn.execute(
+                    "UPDATE recurring_series SET last_date = ? WHERE id = ?",
+                    [max_date, series_id]
+                )
+                updated_series.append({
+                    "name": display_name or name,
+                    "old_last_date": last_date,
+                    "new_last_date": max_date,
+                    "linked_count": len(unlinked)
+                })
+
+    return {
+        "linked_transactions": linked_count,
+        "updated_series_count": len(updated_series),
+        "updated_series": updated_series
+    }

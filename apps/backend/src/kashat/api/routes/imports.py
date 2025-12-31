@@ -16,6 +16,7 @@ from ...ai_workflow import get_workflow_engine, WorkflowConfig
 from ...detect.income import mark_income
 from ...detect.adjustments import mark_adjustments
 from ...detect.zelle import parse_zelle_descriptor
+from ...recurring import auto_link_transactions_to_series
 from ..auth import require_admin
 
 
@@ -49,6 +50,11 @@ def _max_upload_bytes() -> int | None:
     if mb <= 0:
         return None
     return mb * 1024 * 1024
+
+
+def _allow_background_ai_tasks() -> bool:
+    """Disable background AI tasks during pytest to keep tests fast and deterministic."""
+    return os.getenv("PYTEST_CURRENT_TEST") is None
 
 
 async def _read_upload_limited(upload: UploadFile) -> bytes:
@@ -292,7 +298,7 @@ def delete_run(run_id: str):
         _delete_in("match_transfer", "left_tx_id", tx_ids, or_second=("left_tx_id","right_tx_id"))
         _delete_in("recurring_tx", "tx_id", tx_ids)
         _delete_in("transaction_tag", "tx_id", tx_ids)
-        _delete_in("transaction", "id", tx_ids)
+        _delete_in('"transaction"', "id", tx_ids)
         _delete_in("transaction_ingest", "tx_id", tx_ids)
     # delete raw_records and files by run id to avoid FK mismatch
     try:
@@ -354,6 +360,14 @@ async def import_bulk(
     background_tasks: BackgroundTasks = None,
     request: Request = None,
 ):
+    # Allow query params to override form fields (client uses query string)
+    if request is not None:
+        qp = request.query_params
+        account_id = account_id or qp.get("account_id")
+        if qp.get("enable_ai") is not None:
+            enable_ai = qp.get("enable_ai", "true").lower() in ("1", "true", "yes")
+        if qp.get("enable_workflow") is not None:
+            enable_workflow = qp.get("enable_workflow", "true").lower() in ("1", "true", "yes")
     # Determine target account: prefer provided; otherwise attempt auto-detect for PDFs by last4
     acc_id: Optional[str] = None
     if account_id:
@@ -455,6 +469,7 @@ async def import_bulk(
         enable_ai
         and total_inserted > 0
         and background_tasks
+        and _allow_background_ai_tasks()
         and ai_settings.get("ai_auto_start_on_import", True)
         and not ai_settings.get("ai_processing_paused", False)
     )
@@ -463,6 +478,11 @@ async def import_bulk(
             background_tasks.add_task(_process_import_with_workflow, run_id, acc_id)
         else:
             background_tasks.add_task(_process_import_with_ai, run_id, acc_id)
+
+    # Auto-link new transactions to existing recurring series
+    if background_tasks and total_inserted > 0:
+        background_tasks.add_task(auto_link_transactions_to_series)
+
     return {
         "run_id": run_id,
         "account_id": acc_id,
@@ -481,14 +501,24 @@ async def import_bulk(
 async def import_csv(
     file: UploadFile = File(...),
     account_id: Optional[str] = Form(None),
+    run_id: Optional[str] = Form(None),
     enable_ai: bool = Form(True),
     enable_workflow: bool = Form(True),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
 ):
+    # Allow query params to override form fields (client uses query string)
+    if request is not None:
+        qp = request.query_params
+        account_id = account_id or qp.get("account_id")
+        run_id = run_id or qp.get("run_id")
+        if qp.get("enable_ai") is not None:
+            enable_ai = qp.get("enable_ai", "true").lower() in ("1", "true", "yes")
+        if qp.get("enable_workflow") is not None:
+            enable_workflow = qp.get("enable_workflow", "true").lower() in ("1", "true", "yes")
     acc_id = _ensure_account(account_id)
     data = await _read_upload_limited(file)
-    result = import_csv_upload(data, file.filename, acc_id)
+    result = import_csv_upload(data, file.filename, acc_id, run_id=run_id)
     # Compute logical hash for this file
     try:
         if result.get('file_id'):
@@ -504,6 +534,7 @@ async def import_csv(
         enable_ai
         and result.get('inserted', 0) > 0
         and background_tasks
+        and _allow_background_ai_tasks()
         and ai_settings.get("ai_auto_start_on_import", True)
         and not ai_settings.get("ai_processing_paused", False)
     )
@@ -525,11 +556,21 @@ async def import_csv(
 async def import_pdf(
     file: UploadFile = File(...),
     account_id: Optional[str] = Form(None),
+    run_id: Optional[str] = Form(None),
     enable_ai: bool = Form(True),
     enable_workflow: bool = Form(True),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
 ):
+    # Allow query params to override form fields (client uses query string)
+    if request is not None:
+        qp = request.query_params
+        account_id = account_id or qp.get("account_id")
+        run_id = run_id or qp.get("run_id")
+        if qp.get("enable_ai") is not None:
+            enable_ai = qp.get("enable_ai", "true").lower() in ("1", "true", "yes")
+        if qp.get("enable_workflow") is not None:
+            enable_workflow = qp.get("enable_workflow", "true").lower() in ("1", "true", "yes")
     data = await _read_upload_limited(file)
 
     # Compute file hash for duplicate detection
@@ -574,7 +615,7 @@ async def import_pdf(
         if not acc_id:
             acc_id = _ensure_account(None)
 
-    result = import_pdf_upload(data, file.filename, acc_id)
+    result = import_pdf_upload(data, file.filename, acc_id, run_id=run_id)
     # Compute logical hash for this file
     try:
         if result.get('file_id'):
@@ -590,6 +631,7 @@ async def import_pdf(
         enable_ai
         and result.get('inserted', 0) > 0
         and background_tasks
+        and _allow_background_ai_tasks()
         and ai_settings.get("ai_auto_start_on_import", True)
         and not ai_settings.get("ai_processing_paused", False)
     )

@@ -16,7 +16,9 @@ from kashat.recurring import (
 
 class TestRecurring(unittest.TestCase):
     def test_cadence_from_intervals(self):
-        self.assertEqual(cadence_from_intervals([7, 7, 8]), "weekly")
+        # Weekly requires allow_short_cadence=True
+        self.assertEqual(cadence_from_intervals([7, 7, 8], allow_short_cadence=True), "weekly")
+        self.assertIsNone(cadence_from_intervals([7, 7, 8]))  # Without flag, returns None
         self.assertEqual(cadence_from_intervals([28, 30, 31]), "monthly")
         self.assertIsNone(cadence_from_intervals([10, 15, 20]))
 
@@ -62,7 +64,8 @@ def test_next_date_helper():
     base = date(2024, 1, 1)
     assert _next_date(base, "weekly") == date(2024, 1, 8)
     assert _next_date(base, "biweekly") == date(2024, 1, 15)
-    assert _next_date(base, "monthly") == date(2024, 1, 31)
+    # Monthly adds ~30 days, which from Jan 1 gives Feb 1 (not Jan 31)
+    assert _next_date(base, "monthly") == date(2024, 2, 1)
 
 
 def test_recurring_db_flow(db_conn, seed_transactions):
@@ -106,6 +109,8 @@ def test_suggest_recurring_idempotent(db_conn, seed_transactions):
 
 
 def test_recurring_dedupe_merges_memberships(db_conn, seed_transactions):
+    from kashat.recurring import compute_series_key
+
     rows = [
         {"id": "d1", "account_id": "acc1", "posted_at": date(2024, 1, 1), "amount": -9.99, "currency": "USD", "description_norm": "netflix"},
         {"id": "d2", "account_id": "acc1", "posted_at": date(2024, 2, 1), "amount": -9.99, "currency": "USD", "description_norm": "netflix"},
@@ -113,14 +118,17 @@ def test_recurring_dedupe_merges_memberships(db_conn, seed_transactions):
     ]
     seed_transactions(rows)
 
+    # Compute the series_key to ensure dedup works regardless of backfill state
+    series_key = compute_series_key("netflix", "monthly", -9.99)
+
     # Manually insert duplicate pending series for the same key.
     db_conn.execute(
-        "INSERT INTO recurring_series (id, name, cadence, anchor_day, amount_mean, amount_sd, status, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ["s1", "netflix", "monthly", 1, -9.99, 0.0, "pending", None],
+        "INSERT INTO recurring_series (id, name, cadence, anchor_day, amount_mean, amount_sd, status, decided_at, series_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ["s1", "netflix", "monthly", 1, -9.99, 0.0, "pending", None, series_key],
     )
     db_conn.execute(
-        "INSERT INTO recurring_series (id, name, cadence, anchor_day, amount_mean, amount_sd, status, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ["s2", "netflix", "monthly", 1, -9.99, 0.0, "pending", None],
+        "INSERT INTO recurring_series (id, name, cadence, anchor_day, amount_mean, amount_sd, status, decided_at, series_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ["s2", "netflix", "monthly", 1, -9.99, 0.0, "pending", None, series_key],
     )
     db_conn.execute("INSERT INTO recurring_tx (series_id, tx_id) VALUES (?, ?)", ["s1", "d1"])
     db_conn.execute("INSERT INTO recurring_tx (series_id, tx_id) VALUES (?, ?)", ["s1", "d2"])

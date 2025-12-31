@@ -28,7 +28,9 @@ def test_category_delete_and_merge():
     csv = b"date,description,amount\n2025-01-01,Test Tx,-10.00\n"
     files = {"file": ("one.csv", csv, "text/csv")}
     c.post("/api/imports/csv", files=files, data={"account_id": "accx"})
-    tx = c.get("/api/transactions?limit=1").json()[0]
+    resp = c.get("/api/transactions?limit=1").json()
+    items = resp.get("items", resp) if isinstance(resp, dict) else resp
+    tx = items[0]
     c.post(f"/api/transactions/{tx['id']}/category", json={"category_id": a})
     # Delete A should fail due to refs
     rd2 = c.delete(f"/api/categories/{a}")

@@ -71,7 +71,9 @@ export function useUploadCSV() {
       const queryParams = new URLSearchParams()
       if (params.account_id) queryParams.set('account_id', params.account_id)
       if (params.run_id) queryParams.set('run_id', params.run_id)
-      if (params.enable_workflow) queryParams.set('enable_workflow', 'true')
+      if (params.enable_workflow !== undefined) {
+        queryParams.set('enable_workflow', String(params.enable_workflow))
+      }
 
       const url = `/api/imports/csv${queryParams.toString() ? '?' + queryParams.toString() : ''}`
 
@@ -105,6 +107,7 @@ export function useUploadPDF() {
       file: File
       account_id?: string
       run_id?: string
+      enable_workflow?: boolean
     }) => {
       const formData = new FormData()
       formData.append('file', params.file)
@@ -112,6 +115,9 @@ export function useUploadPDF() {
       const queryParams = new URLSearchParams()
       if (params.account_id) queryParams.set('account_id', params.account_id)
       if (params.run_id) queryParams.set('run_id', params.run_id)
+      if (params.enable_workflow !== undefined) {
+        queryParams.set('enable_workflow', String(params.enable_workflow))
+      }
 
       const url = `/api/imports/pdf${queryParams.toString() ? '?' + queryParams.toString() : ''}`
 
@@ -160,9 +166,10 @@ export function useBulkUpload() {
       // For bulk uploads, we bypass the Next.js proxy which has a ~2min timeout.
       // Use the backend origin directly for long-running uploads.
       const backendOrigin = typeof window !== 'undefined'
-        ? (process.env.NEXT_PUBLIC_API_BASE?.startsWith('http')
-            ? new URL(process.env.NEXT_PUBLIC_API_BASE).origin
-            : window.location.origin)
+        ? (process.env.NEXT_PUBLIC_BACKEND_ORIGIN
+            || (process.env.NEXT_PUBLIC_API_BASE?.startsWith('http')
+              ? new URL(process.env.NEXT_PUBLIC_API_BASE).origin
+              : window.location.origin))
         : ''
 
       // Try direct backend first, fall back to proxy

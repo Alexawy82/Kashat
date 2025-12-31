@@ -32,7 +32,7 @@ class TestReimportIntegration(unittest.TestCase):
             import_csv_upload(f.read(), "sample_bank.csv", account_id="acc1")
 
         conn = get_conn()
-        cnt = conn.execute("SELECT COUNT(*) FROM transaction").fetchone()[0]
+        cnt = conn.execute('SELECT COUNT(*) FROM "transaction"').fetchone()[0]
         # Expect 6 unique transactions from sample_bank.csv
         self.assertEqual(cnt, 6)
 

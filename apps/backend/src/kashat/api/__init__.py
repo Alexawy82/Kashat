@@ -27,6 +27,20 @@ logger = logging.getLogger(__name__)
 from slowapi.errors import RateLimitExceeded
 from .limiter import limiter
 
+# CORS helpers
+def _get_cors_origins() -> list[str]:
+    raw = (os.getenv("KASHAT_CORS") or "").strip()
+    if raw == "" or raw.lower() == "localhost":
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    if raw == "*":
+        return ["*"]
+    return [v.strip() for v in raw.split(",") if v.strip()]
+
+
+def _allow_cors_credentials() -> bool:
+    origins = _get_cors_origins()
+    return "*" not in origins
+
 # --- Metrics Middleware ---
 # Kept for observability, but simplified.
 
@@ -61,11 +75,13 @@ def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        connect()
-        logger.info("Database connected.")
+        if os.getenv("PYTEST_CURRENT_TEST") is None:
+            connect()
+            logger.info("Database connected.")
         yield
-        close()
-        logger.info("Database disconnected.")
+        if os.getenv("PYTEST_CURRENT_TEST") is None:
+            close()
+            logger.info("Database disconnected.")
 
     app = FastAPI(
         title="Kashat API",
@@ -75,12 +91,11 @@ def create_app() -> FastAPI:
         redoc_url=None # Disable redoc to save resources
     )
 
-    # 1. CORS - Permissive for Local Development
-    # In a local tool, strict CORS is just an annoyance.
+    # 1. CORS - allowlist by default, override via KASHAT_CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"], # Allow all for local tool
-        allow_credentials=True,
+        allow_origins=_get_cors_origins(),
+        allow_credentials=_allow_cors_credentials(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -171,8 +186,12 @@ def create_app() -> FastAPI:
     app.include_router(budgets_router, prefix="/api")
 
     # --- Metrics Endpoint ---
-    @app.get("/metrics")
-    def metrics():
-        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    if os.getenv("KASHAT_EXPOSE_METRICS", "false").lower() in ("1", "true", "yes"):
+        @app.get("/metrics")
+        def metrics():
+            return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
+
+# Create app instance for uvicorn
+app = create_app()

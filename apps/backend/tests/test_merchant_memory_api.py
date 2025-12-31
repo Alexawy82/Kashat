@@ -34,7 +34,7 @@ def sample_data():
     # Create test transaction
     tx_id = str(uuid.uuid4())
     conn.execute("""
-        INSERT INTO transaction (id, account_id, posted_at, amount, description_norm, fingerprint, created_at)
+        INSERT INTO "transaction" (id, account_id, posted_at, amount, description_norm, fingerprint, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, [tx_id, account_id, "2024-01-01", -25.50, "SHEETZ #1234 PURCHASE", f"test-{tx_id}", datetime.now(UTC)])
     
@@ -55,7 +55,7 @@ def sample_data():
     # Cleanup
     conn.execute("DELETE FROM merchant_category_mapping WHERE merchant_pattern = ?", ["Sheetz"])
     conn.execute("DELETE FROM transaction_category WHERE tx_id = ?", [tx_id])
-    conn.execute("DELETE FROM transaction WHERE id = ?", [tx_id])
+    conn.execute('DELETE FROM "transaction" WHERE id = ?', [tx_id])
     conn.execute("DELETE FROM category WHERE id = ?", [category_id])
     conn.execute("DELETE FROM account WHERE id = ?", [account_id])
 
@@ -69,7 +69,7 @@ class TestMerchantMemoryAPIEndpoints:
         category_id = sample_data["category_id"]
         
         response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": tx_id,
                 "category_id": category_id
@@ -92,7 +92,7 @@ class TestMerchantMemoryAPIEndpoints:
         fake_category_id = str(uuid.uuid4())
         
         response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": fake_tx_id,
                 "category_id": fake_category_id
@@ -108,7 +108,7 @@ class TestMerchantMemoryAPIEndpoints:
         fake_category_id = str(uuid.uuid4())
         
         response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": tx_id,
                 "category_id": fake_category_id
@@ -120,7 +120,7 @@ class TestMerchantMemoryAPIEndpoints:
     
     def test_get_merchant_memory_stats(self, authenticated_client):
         """Test getting merchant memory statistics"""
-        response = authenticated_client.get("/ai/merchant-memory/stats")
+        response = authenticated_client.get("/api/ai/merchant-memory/stats")
         
         assert response.status_code == 200
         data = response.json()
@@ -153,7 +153,7 @@ class TestMerchantMemoryAPIEndpoints:
         
         for description, expected in test_cases:
             response = authenticated_client.post(
-                "/ai/merchant-memory/extract",
+                "/api/ai/merchant-memory/extract",
                 json={"description": description}
             )
             
@@ -166,7 +166,7 @@ class TestMerchantMemoryAPIEndpoints:
     
     def test_get_learned_mappings_empty(self, authenticated_client):
         """Test getting learned mappings when none exist"""
-        response = authenticated_client.get("/ai/merchant-memory/learned-mappings")
+        response = authenticated_client.get("/api/ai/merchant-memory/learned-mappings")
         
         assert response.status_code == 200
         data = response.json()
@@ -183,7 +183,7 @@ class TestMerchantMemoryAPIEndpoints:
         
         # First learn from categorization
         learn_response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": tx_id,
                 "category_id": category_id
@@ -192,7 +192,7 @@ class TestMerchantMemoryAPIEndpoints:
         assert learn_response.status_code == 200
         
         # Then get learned mappings
-        response = authenticated_client.get("/ai/merchant-memory/learned-mappings?limit=10")
+        response = authenticated_client.get("/api/ai/merchant-memory/learned-mappings?limit=10")
         
         assert response.status_code == 200
         data = response.json()
@@ -229,7 +229,7 @@ class TestMerchantMemoryManagementEndpoints:
         
         # First learn from categorization
         learn_response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": tx_id,
                 "category_id": category_id
@@ -240,7 +240,7 @@ class TestMerchantMemoryManagementEndpoints:
         # Then delete the mapping
         response = authenticated_client.request(
             "DELETE",
-            "/ai/merchant-memory/mapping",
+            "/api/ai/merchant-memory/mapping",
             json={"merchant_pattern": "Sheetz"}
         )
         
@@ -255,7 +255,7 @@ class TestMerchantMemoryManagementEndpoints:
         """Test deletion of non-existent merchant mapping"""
         response = authenticated_client.request(
             "DELETE",
-            "/ai/merchant-memory/mapping",
+            "/api/ai/merchant-memory/mapping",
             json={"merchant_pattern": "NonExistentMerchant"}
         )
         
@@ -269,7 +269,7 @@ class TestMerchantMemoryManagementEndpoints:
         
         # First learn from categorization
         learn_response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": tx_id,
                 "category_id": category_id
@@ -278,7 +278,7 @@ class TestMerchantMemoryManagementEndpoints:
         assert learn_response.status_code == 200
         
         # Then clear all mappings
-        response = authenticated_client.post("/ai/merchant-memory/clear-all")
+        response = authenticated_client.post("/api/ai/merchant-memory/clear-all")
         
         assert response.status_code == 200
         data = response.json()
@@ -299,7 +299,7 @@ class TestMerchantMemoryIntegration:
         
         # Step 1: Learn from categorization
         learn_response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={
                 "transaction_id": tx_id,
                 "category_id": category_id
@@ -309,13 +309,13 @@ class TestMerchantMemoryIntegration:
         assert learn_response.json()["merchant_learned"] == "Sheetz"
         
         # Step 2: Check stats reflect the learning
-        stats_response = authenticated_client.get("/ai/merchant-memory/stats")
+        stats_response = authenticated_client.get("/api/ai/merchant-memory/stats")
         assert stats_response.status_code == 200
         stats_data = stats_response.json()
         assert stats_data["merchant_memory"]["total_learned_merchants"] >= 1
         
         # Step 3: Get learned mappings
-        mappings_response = authenticated_client.get("/ai/merchant-memory/learned-mappings")
+        mappings_response = authenticated_client.get("/api/ai/merchant-memory/learned-mappings")
         assert mappings_response.status_code == 200
         mappings_data = mappings_response.json()
         assert mappings_data["total_mappings"] >= 1
@@ -328,7 +328,7 @@ class TestMerchantMemoryIntegration:
         
         # Step 4: Extract merchant from description
         extract_response = authenticated_client.post(
-            "/ai/merchant-memory/extract",
+            "/api/ai/merchant-memory/extract",
             json={"description": "SHEETZ #9999 DIFFERENT LOCATION"}
         )
         assert extract_response.status_code == 200
@@ -337,13 +337,13 @@ class TestMerchantMemoryIntegration:
         # Step 5: Delete the mapping
         delete_response = authenticated_client.request(
             "DELETE",
-            "/ai/merchant-memory/mapping",
+            "/api/ai/merchant-memory/mapping",
             json={"merchant_pattern": "Sheetz"}
         )
         assert delete_response.status_code == 200
         
         # Step 6: Verify mapping is gone
-        final_mappings_response = authenticated_client.get("/ai/merchant-memory/learned-mappings")
+        final_mappings_response = authenticated_client.get("/api/ai/merchant-memory/learned-mappings")
         final_mappings_data = final_mappings_response.json()
         
         remaining_sheetz = [
@@ -360,7 +360,7 @@ class TestMerchantMemoryIntegration:
         # Learn multiple times
         for i in range(3):
             response = authenticated_client.post(
-                "/ai/merchant-memory/learn",
+                "/api/ai/merchant-memory/learn",
                 json={
                     "transaction_id": tx_id,
                     "category_id": category_id
@@ -369,7 +369,7 @@ class TestMerchantMemoryIntegration:
             assert response.status_code == 200
         
         # Check that usage count increased
-        mappings_response = authenticated_client.get("/ai/merchant-memory/learned-mappings")
+        mappings_response = authenticated_client.get("/api/ai/merchant-memory/learned-mappings")
         mappings_data = mappings_response.json()
         
         sheetz_mapping = next(
@@ -387,7 +387,7 @@ class TestMerchantMemoryErrorHandling:
     def test_learn_invalid_json(self, authenticated_client):
         """Test learning endpoint with invalid JSON"""
         response = authenticated_client.post(
-            "/ai/merchant-memory/learn",
+            "/api/ai/merchant-memory/learn",
             json={"invalid": "data"}
         )
         
@@ -397,7 +397,7 @@ class TestMerchantMemoryErrorHandling:
     def test_extract_missing_description(self, authenticated_client):
         """Test extraction endpoint with missing description"""
         response = authenticated_client.post(
-            "/ai/merchant-memory/extract",
+            "/api/ai/merchant-memory/extract",
             json={}
         )
         
@@ -408,7 +408,7 @@ class TestMerchantMemoryErrorHandling:
         """Test delete mapping with invalid JSON"""
         response = authenticated_client.request(
             "DELETE",
-            "/ai/merchant-memory/mapping",
+            "/api/ai/merchant-memory/mapping",
             json={"invalid": "data"}
         )
         
@@ -419,7 +419,7 @@ class TestMerchantMemoryErrorHandling:
         """Test that endpoints handle database errors gracefully"""
         # Test with malformed merchant pattern that might cause DB issues
         response = authenticated_client.post(
-            "/ai/merchant-memory/extract",
+            "/api/ai/merchant-memory/extract",
             json={"description": ""}
         )
         
@@ -438,7 +438,7 @@ class TestMerchantMemoryPerformance:
         large_description = "SHEETZ #1234 " + "A" * 10000  # 10KB description
         
         response = authenticated_client.post(
-            "/ai/merchant-memory/extract",
+            "/api/ai/merchant-memory/extract",
             json={"description": large_description}
         )
         
@@ -451,7 +451,7 @@ class TestMerchantMemoryPerformance:
         import time
         
         start_time = time.time()
-        response = authenticated_client.get("/ai/merchant-memory/stats")
+        response = authenticated_client.get("/api/ai/merchant-memory/stats")
         end_time = time.time()
         
         assert response.status_code == 200
@@ -460,7 +460,7 @@ class TestMerchantMemoryPerformance:
     
     def test_mappings_endpoint_with_limit(self, authenticated_client):
         """Test that mappings endpoint respects limit parameter"""
-        response = authenticated_client.get("/ai/merchant-memory/learned-mappings?limit=1")
+        response = authenticated_client.get("/api/ai/merchant-memory/learned-mappings?limit=1")
         
         assert response.status_code == 200
         data = response.json()

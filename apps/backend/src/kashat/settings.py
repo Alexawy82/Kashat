@@ -23,6 +23,9 @@ def _default_lmstudio_base_url() -> str:
 
 DEFAULTS = {
     "recurring_tolerance": 0.15,
+    "recurring_default_view": "all",
+    "recurring_show_annual": True,
+    "recurring_sparkline_period": 12,
     # Transactions page defaults
     "tx_default_sort_by": "posted_at",   # posted_at|amount|description|category|business|income|adjustment
     "tx_default_sort_dir": "desc",       # asc|desc
@@ -32,10 +35,23 @@ DEFAULTS = {
     "ai_provider": "local",              # local|lmstudio|openai|auto
     "ai_openai_api_key": "",             # OpenAI API key (sensitive)
     "ai_openai_base_url": "",            # optional proxy/Azure base URL
+    "ai_openai_model": "gpt-4o-mini",
     "ai_lmstudio_base_url": _default_lmstudio_base_url(),
+    "ai_lmstudio_model": "",
     "ai_model_categorize": "",           # override per task
     "ai_model_merchant": "",
     "ai_model_anomaly": "",
+    # AI timeouts/retries
+    "ai_timeout": 30,
+    "ai_connect_timeout": 5,
+    "ai_max_retries": 2,
+    "ai_retry_min_wait": 0.5,
+    "ai_retry_max_wait": 10,
+    "ai_retry_multiplier": 2,
+    "ai_retry_jitter": True,
+    "ai_max_concurrency": 2,
+    "ai_temperature": 0.1,
+    "ai_debug": False,
     # AI behavior
     "ai_auto_categorize_on_import": True,
     "ai_auto_categorize_min_conf": 0.7,
@@ -52,9 +68,13 @@ DEFAULTS = {
     # Dedup defaults
     "dedup_days_window": 30,
     "dedup_min_confidence": 0.7,
+    # Dashboard
+    "dashboard_default_period": "30d",
+    "dashboard_show_ai": True,
     # Runtime controls
     "realtime_enabled": False,
     "sqlite_wal_mode": True,  # Use WAL mode for better concurrency
+    "duckdb_threads": 0,
 }
 
 

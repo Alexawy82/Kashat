@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { toast } from "@/components/ui/Toaster"
 import {
   Zap, Plus, Trash2, Sparkles, Loader2, Play, RefreshCw,
   CheckCircle, Settings
@@ -24,6 +26,7 @@ import { useCategories } from "@/hooks/useCategories"
 export default function AutomationSettingsPage() {
   const [newPattern, setNewPattern] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
+  const { confirm, ConfirmDialog } = useConfirm()
 
   const { data: rules, isLoading } = useRules()
   const { data: suggestions } = useRuleSuggestions()
@@ -69,8 +72,14 @@ export default function AutomationSettingsPage() {
     })
   }
 
-  const handleDelete = (ruleId: string) => {
-    if (confirm('Delete this rule?')) {
+  const handleDelete = async (ruleId: string) => {
+    const confirmed = await confirm({
+      title: 'Delete Rule',
+      description: 'Are you sure you want to delete this rule?',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    })
+    if (confirmed) {
       deleteRule.mutate(ruleId)
     }
   }
@@ -78,7 +87,7 @@ export default function AutomationSettingsPage() {
   const handleApplyAll = () => {
     applyAllRules.mutate(undefined, {
       onSuccess: (data: any) => {
-        alert(`Applied rules: ${data?.rules_matched || 0} rules matched, ${data?.transactions_updated || 0} transactions updated`)
+        toast.success(`Applied rules: ${data?.rules_matched || 0} rules matched, ${data?.transactions_updated || 0} transactions updated`)
       }
     })
   }
@@ -290,6 +299,7 @@ export default function AutomationSettingsPage() {
           </CardContent>
         </Card>
       </div>
+      <ConfirmDialog />
     </div>
   )
 }

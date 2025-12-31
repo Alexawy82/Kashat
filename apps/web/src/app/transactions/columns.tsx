@@ -3,11 +3,13 @@
 import { ColumnDef } from "@tanstack/react-table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   ArrowUpDown, Sparkles,
   TrendingUp, Briefcase, CheckCircle2, Repeat
 } from "lucide-react"
 import { TransactionActions } from "./TransactionActions"
+import { InlineCategorySelector } from "@/components/transactions/InlineCategorySelector"
 
 // Enhanced transaction type matching backend
 export type Transaction = {
@@ -22,6 +24,8 @@ export type Transaction = {
   is_business?: boolean
   is_income?: boolean
   ai_confidence?: number
+  ai_merchant_name?: string
+  ai_suggested_category?: string
   confidence?: "high" | "medium" | "low" | null
   status?: "pending" | "posted"
   is_recurring?: boolean
@@ -34,6 +38,30 @@ const confidenceColors = {
 }
 
 export const columns: ColumnDef<Transaction>[] = [
+  {
+    id: "select",
+    header: ({ table }) => (
+      <Checkbox
+        checked={
+          table.getIsAllPageRowsSelected() ||
+          (table.getIsSomePageRowsSelected() && "indeterminate")
+        }
+        onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+        aria-label="Select all"
+        className="translate-y-[2px]"
+      />
+    ),
+    cell: ({ row }) => (
+      <Checkbox
+        checked={row.getIsSelected()}
+        onCheckedChange={(value) => row.toggleSelected(!!value)}
+        aria-label="Select row"
+        className="translate-y-[2px]"
+      />
+    ),
+    enableSorting: false,
+    enableHiding: false,
+  },
   {
     accessorKey: "date",
     header: ({ column }) => {
@@ -66,7 +94,7 @@ export const columns: ColumnDef<Transaction>[] = [
     cell: ({ row }) => {
       const merchant = row.getValue("merchant") as string
       const description = row.original.description
-      const hasAI = row.original.ai_confidence !== undefined && row.original.ai_confidence > 0
+      const hasAI = (row.original.ai_confidence !== undefined && row.original.ai_confidence > 0) || Boolean(row.original.ai_merchant_name)
 
       return (
         <div className="max-w-[200px]">
@@ -87,31 +115,16 @@ export const columns: ColumnDef<Transaction>[] = [
     accessorKey: "category",
     header: "Category",
     cell: ({ row }) => {
-        const category = row.getValue("category") as string
-        const confidence = row.original.confidence
-        const isUncategorized = category === 'Uncategorized' || !category
-
+        const transaction = row.original
         return (
-            <div className="flex items-center gap-2">
-                {isUncategorized ? (
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Uncategorized
-                  </Badge>
-                ) : (
-                  <>
-                    <span className="text-sm">{category}</span>
-                    {confidence && (
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] px-1.5 py-0 h-4 ${confidenceColors[confidence]}`}
-                      >
-                        {confidence === 'high' && <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />}
-                        {confidence}
-                      </Badge>
-                    )}
-                  </>
-                )}
-            </div>
+          <InlineCategorySelector
+            transactionId={transaction.id}
+            currentCategory={transaction.category}
+            currentCategoryId={transaction.category_id}
+            aiSuggestedCategory={transaction.ai_suggested_category}
+            aiConfidence={transaction.ai_confidence}
+            compact
+          />
         )
     }
   },
@@ -188,6 +201,7 @@ export const columns: ColumnDef<Transaction>[] = [
             category: transaction.category,
             category_id: transaction.category_id,
             is_business: transaction.is_business,
+            is_income: transaction.is_income,
           }}
         />
       )

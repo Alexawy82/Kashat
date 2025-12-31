@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import {
   Tags, Plus, Trash2, Edit2, ChevronRight, Loader2,
   CheckCircle, AlertTriangle, FolderTree
@@ -18,6 +19,7 @@ export default function CategoriesSettingsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const queryClient = useQueryClient()
+  const { confirm, ConfirmDialog } = useConfirm()
 
   // Fetch categories
   const { data: categoriesData, isLoading } = useQuery({
@@ -128,8 +130,14 @@ export default function CategoriesSettingsPage() {
     }
   }
 
-  const handleDelete = (id: string, name: string) => {
-    if (confirm(`Delete category "${name}"? This cannot be undone.`)) {
+  const handleDelete = async (id: string, name: string) => {
+    const confirmed = await confirm({
+      title: 'Delete Category',
+      description: `Delete category "${name}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    })
+    if (confirmed) {
       deleteCategory.mutate(id)
     }
   }
@@ -359,6 +367,7 @@ export default function CategoriesSettingsPage() {
           )}
         </div>
       </div>
+      <ConfirmDialog />
     </div>
   )
 }

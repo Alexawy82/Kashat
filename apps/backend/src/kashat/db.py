@@ -265,6 +265,285 @@ CREATE TABLE IF NOT EXISTS networth_snapshot (
 
 CREATE INDEX IF NOT EXISTS idx_networth_date ON networth_snapshot(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_tx_reviewed ON [transaction](reviewed_at);
+
+-- ============================================================================
+-- NET WORTH INTELLIGENCE TABLES
+-- ============================================================================
+
+-- Pending suggestions (before user confirms)
+CREATE TABLE IF NOT EXISTS networth_suggestion (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    subtype TEXT,
+    confidence REAL DEFAULT 0.5,
+    source_recurring_id TEXT,
+    source_data JSON,
+    suggested_values JSON,
+    status TEXT DEFAULT 'pending',
+    snoozed_until TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    FOREIGN KEY (source_recurring_id) REFERENCES recurring_series(id)
+);
+
+-- Confirmed assets
+CREATE TABLE IF NOT EXISTS asset (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    subtype TEXT,
+    name TEXT NOT NULL,
+    current_value REAL,
+    purchase_price REAL,
+    purchase_date TEXT,
+    details JSON,
+    linked_recurring_id TEXT,
+    linked_liability_id TEXT,
+    suggestion_id TEXT,
+    enrichment_source TEXT,
+    enrichment_data JSON,
+    last_enriched_at TEXT,
+    auto_refresh INTEGER DEFAULT 1,
+    milestones_json JSON,
+    is_active INTEGER DEFAULT 1,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (linked_recurring_id) REFERENCES recurring_series(id)
+);
+
+-- Confirmed liabilities
+CREATE TABLE IF NOT EXISTS liability (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    lender TEXT,
+    original_amount REAL,
+    current_balance REAL,
+    interest_rate REAL,
+    monthly_payment REAL,
+    term_months INTEGER,
+    start_date TEXT,
+    expected_payoff_date TEXT,
+    linked_recurring_id TEXT,
+    linked_asset_id TEXT,
+    suggestion_id TEXT,
+    auto_calculate_balance INTEGER DEFAULT 1,
+    milestones_json JSON,
+    is_active INTEGER DEFAULT 1,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (linked_recurring_id) REFERENCES recurring_series(id),
+    FOREIGN KEY (linked_asset_id) REFERENCES asset(id)
+);
+
+-- Track payments against liabilities
+CREATE TABLE IF NOT EXISTS liability_payment (
+    id TEXT PRIMARY KEY,
+    liability_id TEXT NOT NULL,
+    transaction_id TEXT NOT NULL,
+    payment_date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    principal_portion REAL,
+    interest_portion REAL,
+    balance_after REAL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (liability_id) REFERENCES liability(id),
+    FOREIGN KEY (transaction_id) REFERENCES [transaction](id),
+    UNIQUE(liability_id, transaction_id)
+);
+
+-- Enrichment cache
+CREATE TABLE IF NOT EXISTS enrichment_cache (
+    id TEXT PRIMARY KEY,
+    cache_key TEXT UNIQUE NOT NULL,
+    source TEXT NOT NULL,
+    data JSON NOT NULL,
+    fetched_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Net worth settings
+CREATE TABLE IF NOT EXISTS networth_settings (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    property_refresh_days INTEGER DEFAULT 30,
+    vehicle_refresh_days INTEGER DEFAULT 7,
+    metal_refresh_hours INTEGER DEFAULT 1,
+    stock_refresh_minutes INTEGER DEFAULT 15,
+    notify_milestones INTEGER DEFAULT 1,
+    notify_appreciation INTEGER DEFAULT 1,
+    notify_suggestions INTEGER DEFAULT 1,
+    milestone_thresholds JSON DEFAULT '[10, 20, 25, 50, 75, 100]',
+    show_suggestions_on_dashboard INTEGER DEFAULT 1,
+    default_property_source TEXT DEFAULT 'manual',
+    default_vehicle_source TEXT DEFAULT 'manual',
+    achieved_milestones JSON DEFAULT '[]',
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Net Worth Intelligence Indexes
+CREATE INDEX IF NOT EXISTS idx_asset_type ON asset(type);
+CREATE INDEX IF NOT EXISTS idx_asset_linked_recurring ON asset(linked_recurring_id);
+CREATE INDEX IF NOT EXISTS idx_liability_type ON liability(type);
+CREATE INDEX IF NOT EXISTS idx_liability_linked_recurring ON liability(linked_recurring_id);
+CREATE INDEX IF NOT EXISTS idx_suggestion_status ON networth_suggestion(status);
+CREATE INDEX IF NOT EXISTS idx_enrichment_cache_key ON enrichment_cache(cache_key);
+CREATE INDEX IF NOT EXISTS idx_liability_payment_liability ON liability_payment(liability_id);
+
+-- ============================================================================
+-- BUDGET INTELLIGENCE TABLES
+-- ============================================================================
+
+-- Income sources detected from transactions
+CREATE TABLE IF NOT EXISTS income_source (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,  -- 'salary', 'side_income', 'investment', 'transfer', 'refund', 'other'
+
+    -- Detection data
+    avg_amount REAL,
+    frequency TEXT,  -- 'weekly', 'biweekly', 'monthly', 'irregular'
+    confidence REAL DEFAULT 0.5,
+
+    -- Pattern matching
+    pattern_description TEXT,
+    last_detected_at TEXT,
+    occurrence_count INTEGER DEFAULT 0,
+
+    -- User overrides
+    user_confirmed BOOLEAN DEFAULT FALSE,
+    user_amount_override REAL,
+    user_name_override TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Budget suggestions (AI-generated, pending user review)
+CREATE TABLE IF NOT EXISTS budget_suggestion (
+    id TEXT PRIMARY KEY,
+
+    -- Suggestion type
+    type TEXT NOT NULL,  -- 'full_budget', 'category_limit', 'adjustment', 'seasonal'
+
+    -- For category-level suggestions
+    category_id TEXT,
+    category_name TEXT,
+
+    -- Suggested values
+    suggested_limit REAL,
+    current_avg_spending REAL,
+    spending_trend TEXT,  -- 'increasing', 'decreasing', 'stable', 'volatile'
+    trend_percentage REAL,
+
+    -- Reasoning
+    reason TEXT,
+    confidence REAL DEFAULT 0.5,
+
+    -- Context
+    based_on_months INTEGER,
+    seasonality_factor REAL,
+
+    -- Status
+    status TEXT DEFAULT 'pending',  -- 'pending', 'accepted', 'dismissed', 'snoozed'
+    snoozed_until TEXT,
+
+    -- If accepted, link to budget
+    applied_to_budget_id TEXT,
+
+    created_at TEXT DEFAULT (datetime('now')),
+    resolved_at TEXT,
+
+    FOREIGN KEY (category_id) REFERENCES category(id),
+    FOREIGN KEY (applied_to_budget_id) REFERENCES budget(id)
+);
+
+-- Link recurring series to budget categories
+CREATE TABLE IF NOT EXISTS budget_recurring_link (
+    id TEXT PRIMARY KEY,
+    budget_id TEXT NOT NULL,
+    budget_category_id TEXT NOT NULL,
+    recurring_series_id TEXT NOT NULL,
+
+    -- Tracking
+    is_committed BOOLEAN DEFAULT TRUE,
+
+    created_at TEXT DEFAULT (datetime('now')),
+
+    FOREIGN KEY (budget_id) REFERENCES budget(id) ON DELETE CASCADE,
+    FOREIGN KEY (budget_category_id) REFERENCES budget_category(id) ON DELETE CASCADE,
+    FOREIGN KEY (recurring_series_id) REFERENCES recurring_series(id)
+);
+
+-- Budget pace snapshots (for tracking overspending trajectory)
+CREATE TABLE IF NOT EXISTS budget_pace_snapshot (
+    id TEXT PRIMARY KEY,
+    budget_id TEXT NOT NULL,
+    budget_category_id TEXT,  -- NULL for overall budget
+
+    snapshot_date TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+
+    -- Current state
+    days_elapsed INTEGER,
+    days_remaining INTEGER,
+    amount_spent REAL,
+    amount_limit REAL,
+
+    -- Projections
+    daily_rate REAL,
+    projected_total REAL,
+    projected_over_under REAL,  -- Positive = over, negative = under
+    exceed_date TEXT,  -- NULL if won't exceed
+
+    -- Status
+    status TEXT,  -- 'on_track', 'at_risk', 'will_exceed', 'exceeded'
+
+    created_at TEXT DEFAULT (datetime('now')),
+
+    FOREIGN KEY (budget_id) REFERENCES budget(id) ON DELETE CASCADE,
+    FOREIGN KEY (budget_category_id) REFERENCES budget_category(id) ON DELETE CASCADE
+);
+
+-- Budget settings
+CREATE TABLE IF NOT EXISTS budget_settings (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+
+    -- Income settings
+    include_irregular_income BOOLEAN DEFAULT FALSE,
+    income_buffer_percent REAL DEFAULT 0.0,
+
+    -- Budget defaults
+    default_period TEXT DEFAULT 'monthly',
+    auto_rollover BOOLEAN DEFAULT FALSE,
+
+    -- Alert settings
+    pace_warning_threshold REAL DEFAULT 0.8,
+    alert_days_before_exceed INTEGER DEFAULT 5,
+
+    -- Suggestion settings
+    suggest_from_spending BOOLEAN DEFAULT TRUE,
+    seasonal_adjustments BOOLEAN DEFAULT TRUE,
+    savings_goal_percent REAL DEFAULT 0.20,
+
+    -- Display preferences
+    show_committed_separate BOOLEAN DEFAULT TRUE,
+    show_pace_tracking BOOLEAN DEFAULT TRUE,
+
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Budget Intelligence Indexes
+CREATE INDEX IF NOT EXISTS idx_income_source_type ON income_source(type);
+CREATE INDEX IF NOT EXISTS idx_income_source_active ON income_source(is_active);
+CREATE INDEX IF NOT EXISTS idx_budget_suggestion_status ON budget_suggestion(status);
+CREATE INDEX IF NOT EXISTS idx_budget_suggestion_category ON budget_suggestion(category_id);
+CREATE INDEX IF NOT EXISTS idx_budget_recurring_link_budget ON budget_recurring_link(budget_id);
+CREATE INDEX IF NOT EXISTS idx_budget_pace_snapshot_budget ON budget_pace_snapshot(budget_id);
+CREATE INDEX IF NOT EXISTS idx_budget_pace_snapshot_date ON budget_pace_snapshot(snapshot_date);
 """
 
 
@@ -520,6 +799,8 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
         ("series_type", "TEXT"),  # "standard" or "p2p_recurring" - distinguishes P2P-originated recurring
         ("p2p_counterparty_id", "TEXT"),  # Link to counterparty table for P2P recurring
         ("p2p_service", "TEXT"),  # venmo, zelle, cashapp, paypal, etc. for P2P recurring
+        ("linked_asset_id", "TEXT"),  # Link to asset table for mortgages/loans
+        ("linked_liability_id", "TEXT"),  # Link to liability table for mortgages/loans
     ]
     for item in recurring_cols:
         col, coltype = item[0], item[1]
@@ -726,6 +1007,47 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
     # Ensure uniqueness on category normalized_name
     try:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_category_normalized ON category(normalized_name)")
+    except Exception:
+        pass
+
+    # Initialize default networth settings
+    try:
+        conn.execute("INSERT OR IGNORE INTO networth_settings (id) VALUES ('default')")
+    except Exception:
+        pass
+
+    # =========================================================================
+    # BUDGET INTELLIGENCE UPGRADES
+    # =========================================================================
+
+    # Add columns to existing budget table
+    budget_cols = [
+        ("income_target", "REAL"),
+        ("savings_target", "REAL"),
+        ("auto_suggested", "BOOLEAN", "FALSE"),
+        ("last_pace_check", "TEXT"),
+    ]
+    for item in budget_cols:
+        col, coltype = item[0], item[1]
+        default = item[2] if len(item) > 2 else None
+        _add_column_if_missing(conn, "budget", col, coltype, default)
+
+    # Add columns to existing budget_category table
+    budget_category_cols = [
+        ("is_committed", "BOOLEAN", "FALSE"),
+        ("source", "TEXT", "'manual'"),  # 'manual', 'suggested', 'recurring'
+        ("trend", "TEXT"),  # 'increasing', 'decreasing', 'stable'
+        ("avg_actual", "REAL"),  # Actual avg spending
+        ("linked_recurring_id", "TEXT"),
+    ]
+    for item in budget_category_cols:
+        col, coltype = item[0], item[1]
+        default = item[2] if len(item) > 2 else None
+        _add_column_if_missing(conn, "budget_category", col, coltype, default)
+
+    # Initialize default budget settings
+    try:
+        conn.execute("INSERT OR IGNORE INTO budget_settings (id) VALUES ('default')")
     except Exception:
         pass
 

@@ -11,6 +11,7 @@ import {
   useReactTable,
   ColumnFiltersState,
   getFilteredRowModel,
+  RowSelectionState,
 } from "@tanstack/react-table"
 
 import {
@@ -21,20 +22,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
+  rowSelection?: RowSelectionState
+  onRowSelectionChange?: (selection: RowSelectionState) => void
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
+  rowSelection: externalRowSelection,
+  onRowSelectionChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
+  const [internalRowSelection, setInternalRowSelection] = React.useState<RowSelectionState>({})
+
+  // Use external state if provided, otherwise use internal
+  const rowSelection = externalRowSelection ?? internalRowSelection
+  const setRowSelection = onRowSelectionChange ?? setInternalRowSelection
 
   const table = useReactTable({
     data,
@@ -45,25 +53,20 @@ export function DataTable<TData, TValue>({
     getSortedRowModel: getSortedRowModel(),
     onColumnFiltersChange: setColumnFilters,
     getFilteredRowModel: getFilteredRowModel(),
+    onRowSelectionChange: (updater) => {
+      const newSelection = typeof updater === 'function' ? updater(rowSelection) : updater
+      setRowSelection(newSelection)
+    },
+    enableRowSelection: true,
     state: {
       sorting,
       columnFilters,
+      rowSelection,
     },
   })
 
   return (
-    <div>
-        <div className="flex items-center py-4">
-            <Input
-            placeholder="Filter merchants..."
-            value={(table.getColumn("merchant")?.getFilterValue() as string) ?? ""}
-            onChange={(event) =>
-                table.getColumn("merchant")?.setFilterValue(event.target.value)
-            }
-            className="max-w-sm"
-            />
-        </div>
-        <div className="rounded-md border bg-card">
+    <div className="rounded-md border bg-card">
         <Table>
             <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -106,25 +109,6 @@ export function DataTable<TData, TValue>({
             )}
             </TableBody>
         </Table>
-        </div>
-        <div className="flex items-center justify-end space-x-2 py-4">
-            <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            >
-            Previous
-            </Button>
-            <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            >
-            Next
-            </Button>
-        </div>
     </div>
   )
 }

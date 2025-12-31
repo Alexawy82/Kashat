@@ -47,13 +47,13 @@ def suggest_transfers(max_days: int = 3, amount_tolerance: float = 0.01, limit: 
                t1.posted_at AS a_date, t2.posted_at AS b_date,
                t1.amount AS a_amount, t2.amount AS b_amount,
                t1.description_norm AS a_desc, t2.description_norm AS b_desc,
-               date_diff('day', t1.posted_at, t2.posted_at) AS day_diff
-        FROM [transaction] t1
-        JOIN [transaction] t2 ON t1.id < t2.id
+               CAST(julianday(t2.posted_at) - julianday(t1.posted_at) AS INTEGER) AS day_diff
+        FROM "transaction" t1
+        JOIN "transaction" t2 ON t1.id < t2.id
         WHERE t1.account_id <> t2.account_id
           AND t1.amount * t2.amount < 0
           AND abs(t1.amount + t2.amount) <= ?
-          AND abs(date_diff('day', t1.posted_at, t2.posted_at)) <= ?
+          AND abs(julianday(t2.posted_at) - julianday(t1.posted_at)) <= ?
           AND t1.is_income = FALSE
           AND t2.is_income = FALSE
         LIMIT ?

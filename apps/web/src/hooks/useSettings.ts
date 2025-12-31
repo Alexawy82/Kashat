@@ -19,6 +19,7 @@ export interface AppSettings {
 
   // OpenAI settings
   ai_openai_api_key?: string
+  ai_openai_api_key_set?: boolean
   ai_openai_base_url?: string
   ai_openai_model?: string
 

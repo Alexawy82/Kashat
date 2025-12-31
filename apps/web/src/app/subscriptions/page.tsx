@@ -26,19 +26,13 @@ import {
   useRunRecurringDetection,
 } from '@/hooks/useAutomation'
 import {
-  useBills,
+  useAllRecurring,
   useCancellationRisks,
   useConfirmWithLearning,
-  useCreditCards,
-  useInsurance,
-  useLoans,
   useOptimizations,
   useRecurringInsights,
-  useRecurringSummary,
   useRejectWithLearning,
-  useSubscriptions,
   useUpcomingPayments,
-  useSpendingByType,
 } from '@/hooks/useRecurring'
 import { SummaryBar } from '@/app/subscriptions/components/SummaryBar'
 import { AlertsBanner } from '@/app/subscriptions/components/AlertsBanner'
@@ -49,6 +43,9 @@ import { ReportsModal } from '@/app/subscriptions/components/ReportsModal'
 import { TypeTabs, TypeTab } from '@/app/subscriptions/components/TypeTabs'
 import { CategoryOverview } from '@/app/subscriptions/components/CategoryOverview'
 import { formatAmount, getCadenceLabel, getMerchantName } from '@/app/subscriptions/lib/recurringUtils'
+import { PageHeader } from '@/components/ui/page-header'
+import Link from 'next/link'
+import { CalendarDays } from 'lucide-react'
 
 function ConfidenceIndicator({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100)
@@ -74,17 +71,23 @@ export default function SubscriptionsPage() {
 
   const { data: suggestionsData, isLoading: suggestionsLoading } = useRecurringSuggestions()
   const { data: confirmed, isLoading: confirmedLoading } = useConfirmedRecurring()
-  const { data: summary, isLoading: summaryLoading } = useRecurringSummary()
-  const { data: subscriptions, isLoading: subscriptionsLoading } = useSubscriptions()
-  const { data: bills, isLoading: billsLoading } = useBills()
-  const { data: loans, isLoading: loansLoading } = useLoans()
-  const { data: creditCards, isLoading: creditCardsLoading } = useCreditCards()
-  const { data: insurance, isLoading: insuranceLoading } = useInsurance()
+
+  // Use consolidated hook - replaces 6 individual type queries
+  const { data: allRecurring, isLoading: allRecurringLoading } = useAllRecurring()
+
   const { data: insights, isLoading: insightsLoading } = useRecurringInsights()
   const { data: optimizations, isLoading: optimizationsLoading } = useOptimizations()
   const { data: cancellationRisks, isLoading: risksLoading } = useCancellationRisks()
   const { data: upcomingPayments, isLoading: upcomingLoading } = useUpcomingPayments(14)
-  const { data: spendingByType } = useSpendingByType()
+
+  // Extract data from consolidated response
+  const summary = allRecurring?.summary
+  const summaryLoading = allRecurringLoading
+  const subscriptions = allRecurring?.by_type?.subscription || []
+  const bills = allRecurring?.by_type?.bill || []
+  const loans = allRecurring?.by_type?.loan || []
+  const creditCards = allRecurring?.by_type?.credit_card || []
+  const insurance = allRecurring?.by_type?.insurance || []
 
   const confirmRecurring = useConfirmWithLearning()
   const rejectRecurring = useRejectWithLearning()
@@ -93,10 +96,6 @@ export default function SubscriptionsPage() {
   const candidates = useMemo(() => (suggestionsData as any[]) || [], [suggestionsData])
   const confirmedList = useMemo(() => (confirmed as any[]) || [], [confirmed])
 
-  const overdueSeries = useMemo(
-    () => confirmedList.filter((x: any) => x.status === 'overdue'),
-    [confirmedList]
-  )
   const priceHikeSeries = useMemo(
     () => confirmedList.filter((x: any) => x.price_hike),
     [confirmedList]
@@ -188,17 +187,17 @@ export default function SubscriptionsPage() {
       label: 'Subscriptions',
       title: 'Subscriptions',
       description: 'Streaming, software, memberships, and other services.',
-      items: (subscriptions as any[]) || [],
-      isLoading: subscriptionsLoading,
+      items: subscriptions as any[],
+      isLoading: allRecurringLoading,
       onSelect: setSelectedSeries,
     },
     {
       key: 'bills',
-      label: 'Housing & Utilities',
-      title: 'Housing & Utilities',
+      label: 'Bills',
+      title: 'Bills',
       description: 'Rent, mortgage, utilities, and household essentials.',
-      items: (bills as any[]) || [],
-      isLoading: billsLoading,
+      items: bills as any[],
+      isLoading: allRecurringLoading,
       onSelect: setSelectedSeries,
     },
     {
@@ -206,8 +205,8 @@ export default function SubscriptionsPage() {
       label: 'Loans',
       title: 'Loans & Debt',
       description: 'Mortgages, auto loans, student loans, and BNPL.',
-      items: (loans as any[]) || [],
-      isLoading: loansLoading,
+      items: loans as any[],
+      isLoading: allRecurringLoading,
       onSelect: setSelectedSeries,
     },
     {
@@ -215,8 +214,8 @@ export default function SubscriptionsPage() {
       label: 'Credit Cards',
       title: 'Credit Cards',
       description: 'Recurring card payments and statements.',
-      items: (creditCards as any[]) || [],
-      isLoading: creditCardsLoading,
+      items: creditCards as any[],
+      isLoading: allRecurringLoading,
       onSelect: setSelectedSeries,
     },
     {
@@ -224,8 +223,8 @@ export default function SubscriptionsPage() {
       label: 'Insurance',
       title: 'Insurance',
       description: 'Auto, home, health, life, and pet insurance.',
-      items: (insurance as any[]) || [],
-      isLoading: insuranceLoading,
+      items: insurance as any[],
+      isLoading: allRecurringLoading,
       onSelect: setSelectedSeries,
     },
   ]
@@ -241,38 +240,49 @@ export default function SubscriptionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Subscriptions</h1>
-          <p className="text-muted-foreground mt-1">
-            Track, manage, and optimize all your recurring charges
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => setReportsOpen(true)}>
-            Reports
-          </Button>
-          <div className="flex items-center gap-2">
-            <Switch id="short-cadence" checked={includeShortCadence} onCheckedChange={setIncludeShortCadence} />
-            <Label htmlFor="short-cadence" className="text-sm text-muted-foreground">
-              Include weekly
-            </Label>
+      <PageHeader
+        title="Subscriptions"
+        description="Track, manage, and optimize all your recurring charges"
+        helpItems={[
+          "Click 'Detect Patterns' to scan your transactions for recurring payments",
+          "Review pending suggestions and confirm or reject detected subscriptions",
+          "Click any subscription to see payment history and manage it",
+          "Use the Reports button to download spending summaries",
+          "Categories include: Subscriptions, Bills, Loans, Credit Cards, Insurance"
+        ]}
+        action={
+          <div className="flex items-center gap-3">
+            <Link href="/bills">
+              <Button variant="outline" className="gap-2">
+                <CalendarDays className="h-4 w-4" />
+                Calendar View
+              </Button>
+            </Link>
+            <Button variant="outline" onClick={() => setReportsOpen(true)}>
+              Reports
+            </Button>
+            <div className="flex items-center gap-2">
+              <Switch id="short-cadence" checked={includeShortCadence} onCheckedChange={setIncludeShortCadence} />
+              <Label htmlFor="short-cadence" className="text-sm text-muted-foreground">
+                Include weekly
+              </Label>
+            </div>
+            <Button
+              variant="outline"
+              onClick={handleRunDetection}
+              disabled={runDetection.isPending}
+              className="gap-2"
+            >
+              {runDetection.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Detect Patterns
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            onClick={handleRunDetection}
-            disabled={runDetection.isPending}
-            className="gap-2"
-          >
-            {runDetection.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            Detect Patterns
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {actionResult && (
         <Alert className={actionResult.type === 'success' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}>
@@ -290,7 +300,7 @@ export default function SubscriptionsPage() {
       <SummaryBar summary={summary as any} pendingCount={candidates.length} isLoading={summaryLoading} />
 
       <AlertsBanner
-        overdueItems={overdueSeries}
+        overdueItems={[]}
         dueSoonItems={upcomingThisWeek}
         priceHikeItems={priceHikeSeries}
         onItemClick={(item) => setSelectedSeries(item)}
@@ -466,14 +476,16 @@ export default function SubscriptionsPage() {
         </div>
 
         <CategoryOverview
-          data={spendingByType as any}
-          isLoading={false}
+          data={summary?.by_type ?? null}
+          totalMonthly={summary?.total_monthly}
+          totalAnnual={summary?.total_monthly ? summary.total_monthly * 12 : undefined}
+          isLoading={allRecurringLoading}
           onCategoryClick={(categoryType) => {
             // Map API category types to tab keys
             const categoryToTab: Record<string, string> = {
-              subscriptions: 'subscriptions',
-              rent_and_utilities: 'bills',
-              loan_payments: 'loans',
+              subscription: 'subscriptions',
+              bill: 'bills',
+              loan: 'loans',
               credit_card: 'credit-cards',
               insurance: 'insurance',
               unknown: 'all',
@@ -501,7 +513,7 @@ export default function SubscriptionsPage() {
         open={reportsOpen}
         onOpenChange={setReportsOpen}
         summary={summary as any}
-        spending={spendingByType as any}
+        spending={summary?.by_type as any}
       />
     </div>
   )

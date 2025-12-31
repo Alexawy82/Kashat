@@ -8,9 +8,18 @@ from ...settings import load_settings, save_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
+def _public_settings(settings: dict) -> dict:
+    safe = dict(settings)
+    secret = safe.pop("ai_openai_api_key", None)
+    safe["ai_openai_api_key_set"] = bool(secret)
+    return safe
+
 
 class SettingsBody(BaseModel):
     recurring_tolerance: float | None = None
+    recurring_default_view: str | None = None
+    recurring_show_annual: bool | None = None
+    recurring_sparkline_period: int | None = None
     tx_default_sort_by: str | None = None
     tx_default_sort_dir: str | None = None
     tx_include_transfers_default: bool | None = None
@@ -19,27 +28,47 @@ class SettingsBody(BaseModel):
     ai_provider: str | None = None
     ai_openai_api_key: str | None = None
     ai_openai_base_url: str | None = None
+    ai_openai_model: str | None = None
     ai_lmstudio_base_url: str | None = None
+    ai_lmstudio_model: str | None = None
     ai_model_categorize: str | None = None
     ai_model_merchant: str | None = None
     ai_model_anomaly: str | None = None
+    ai_timeout: float | None = None
+    ai_connect_timeout: float | None = None
+    ai_max_retries: int | None = None
+    ai_retry_min_wait: float | None = None
+    ai_retry_max_wait: float | None = None
+    ai_retry_multiplier: float | None = None
+    ai_retry_jitter: bool | None = None
+    ai_max_concurrency: int | None = None
+    ai_temperature: float | None = None
+    ai_debug: bool | None = None
     # AI behavior
     ai_auto_categorize_on_import: bool | None = None
     ai_auto_categorize_min_conf: float | None = None
     ai_auto_create_rules: bool | None = None
     ai_auto_rule_min_conf: float | None = None
     ai_anomaly_min_conf: float | None = None
+    # AI processing queue controls
+    ai_processing_paused: bool | None = None
+    ai_batch_size: int | None = None
+    ai_batch_delay_ms: int | None = None
+    ai_max_concurrent_jobs: int | None = None
+    ai_job_timeout_minutes: int | None = None
+    ai_auto_start_on_import: bool | None = None
     # Dashboard
     dashboard_default_period: str | None = None  # e.g., '30d','90d','365d'
     dashboard_show_ai: bool | None = None
     # Runtime
     realtime_enabled: bool | None = None
     sqlite_wal_mode: bool | None = None
+    duckdb_threads: int | None = None
 
 
 @router.get("")
 def get_settings():
-    return load_settings()
+    return _public_settings(load_settings())
 
 
 @router.post("")
@@ -47,6 +76,12 @@ def set_settings(body: SettingsBody):
     s = load_settings()
     if body.recurring_tolerance is not None:
         s["recurring_tolerance"] = float(body.recurring_tolerance)
+    if body.recurring_default_view is not None:
+        s["recurring_default_view"] = str(body.recurring_default_view)
+    if body.recurring_show_annual is not None:
+        s["recurring_show_annual"] = bool(body.recurring_show_annual)
+    if body.recurring_sparkline_period is not None:
+        s["recurring_sparkline_period"] = int(body.recurring_sparkline_period)
     if body.tx_default_sort_by is not None:
         s["tx_default_sort_by"] = str(body.tx_default_sort_by)
     if body.tx_default_sort_dir is not None:
@@ -62,14 +97,38 @@ def set_settings(body: SettingsBody):
         s["ai_openai_api_key"] = str(body.ai_openai_api_key)
     if body.ai_openai_base_url is not None:
         s["ai_openai_base_url"] = str(body.ai_openai_base_url)
+    if body.ai_openai_model is not None:
+        s["ai_openai_model"] = str(body.ai_openai_model)
     if body.ai_lmstudio_base_url is not None:
         s["ai_lmstudio_base_url"] = str(body.ai_lmstudio_base_url)
+    if body.ai_lmstudio_model is not None:
+        s["ai_lmstudio_model"] = str(body.ai_lmstudio_model)
     if body.ai_model_categorize is not None:
         s["ai_model_categorize"] = str(body.ai_model_categorize)
     if body.ai_model_merchant is not None:
         s["ai_model_merchant"] = str(body.ai_model_merchant)
     if body.ai_model_anomaly is not None:
         s["ai_model_anomaly"] = str(body.ai_model_anomaly)
+    if body.ai_timeout is not None:
+        s["ai_timeout"] = float(body.ai_timeout)
+    if body.ai_connect_timeout is not None:
+        s["ai_connect_timeout"] = float(body.ai_connect_timeout)
+    if body.ai_max_retries is not None:
+        s["ai_max_retries"] = int(body.ai_max_retries)
+    if body.ai_retry_min_wait is not None:
+        s["ai_retry_min_wait"] = float(body.ai_retry_min_wait)
+    if body.ai_retry_max_wait is not None:
+        s["ai_retry_max_wait"] = float(body.ai_retry_max_wait)
+    if body.ai_retry_multiplier is not None:
+        s["ai_retry_multiplier"] = float(body.ai_retry_multiplier)
+    if body.ai_retry_jitter is not None:
+        s["ai_retry_jitter"] = bool(body.ai_retry_jitter)
+    if body.ai_max_concurrency is not None:
+        s["ai_max_concurrency"] = int(body.ai_max_concurrency)
+    if body.ai_temperature is not None:
+        s["ai_temperature"] = float(body.ai_temperature)
+    if body.ai_debug is not None:
+        s["ai_debug"] = bool(body.ai_debug)
     # AI behavior
     if body.ai_auto_categorize_on_import is not None:
         s["ai_auto_categorize_on_import"] = bool(body.ai_auto_categorize_on_import)
@@ -81,6 +140,19 @@ def set_settings(body: SettingsBody):
         s["ai_auto_rule_min_conf"] = float(body.ai_auto_rule_min_conf)
     if body.ai_anomaly_min_conf is not None:
         s["ai_anomaly_min_conf"] = float(body.ai_anomaly_min_conf)
+    # AI processing queue controls
+    if body.ai_processing_paused is not None:
+        s["ai_processing_paused"] = bool(body.ai_processing_paused)
+    if body.ai_batch_size is not None:
+        s["ai_batch_size"] = int(body.ai_batch_size)
+    if body.ai_batch_delay_ms is not None:
+        s["ai_batch_delay_ms"] = int(body.ai_batch_delay_ms)
+    if body.ai_max_concurrent_jobs is not None:
+        s["ai_max_concurrent_jobs"] = int(body.ai_max_concurrent_jobs)
+    if body.ai_job_timeout_minutes is not None:
+        s["ai_job_timeout_minutes"] = int(body.ai_job_timeout_minutes)
+    if body.ai_auto_start_on_import is not None:
+        s["ai_auto_start_on_import"] = bool(body.ai_auto_start_on_import)
     # Dashboard
     if body.dashboard_default_period is not None:
         s["dashboard_default_period"] = str(body.dashboard_default_period)
@@ -91,13 +163,29 @@ def set_settings(body: SettingsBody):
         s["realtime_enabled"] = bool(body.realtime_enabled)
     if body.sqlite_wal_mode is not None:
         s["sqlite_wal_mode"] = bool(body.sqlite_wal_mode)
+    if body.duckdb_threads is not None:
+        s["duckdb_threads"] = int(body.duckdb_threads)
     save_settings(s)
-    return s
+    return _public_settings(s)
 
 
 class AISettingsBody(BaseModel):
     """Dedicated AI settings update"""
     ai_provider: str | None = None  # "auto", "lmstudio", "openai", "local"
+    ai_openai_api_key: str | None = None
+    ai_openai_base_url: str | None = None
+    ai_openai_model: str | None = None
+    ai_lmstudio_base_url: str | None = None
+    ai_lmstudio_model: str | None = None
+    ai_timeout: float | None = None
+    ai_connect_timeout: float | None = None
+    ai_max_retries: int | None = None
+    ai_retry_min_wait: float | None = None
+    ai_retry_max_wait: float | None = None
+    ai_retry_multiplier: float | None = None
+    ai_retry_jitter: bool | None = None
+    ai_max_concurrency: int | None = None
+    ai_temperature: float | None = None
     ai_auto_categorize_on_import: bool | None = None
     ai_auto_categorize_min_conf: float | None = None
     ai_debug: bool | None = None
@@ -108,6 +196,7 @@ def get_ai_settings():
     """Get AI-specific settings"""
     import os
     s = load_settings()
+    openai_key_set = bool(s.get("ai_openai_api_key"))
     return {
         "ai_provider": s.get("ai_provider", "auto"),
         "ai_lmstudio_base_url": s.get("ai_lmstudio_base_url", "http://127.0.0.1:1234/v1"),
@@ -115,7 +204,19 @@ def get_ai_settings():
         "ai_auto_categorize_on_import": s.get("ai_auto_categorize_on_import", True),
         "ai_auto_categorize_min_conf": s.get("ai_auto_categorize_min_conf", 0.7),
         "ai_model_categorize": s.get("ai_model_categorize", ""),
+        "ai_timeout": s.get("ai_timeout", 30),
+        "ai_connect_timeout": s.get("ai_connect_timeout", 5),
+        "ai_max_retries": s.get("ai_max_retries", 2),
+        "ai_retry_min_wait": s.get("ai_retry_min_wait", 0.5),
+        "ai_retry_max_wait": s.get("ai_retry_max_wait", 10),
+        "ai_retry_multiplier": s.get("ai_retry_multiplier", 2),
+        "ai_retry_jitter": s.get("ai_retry_jitter", True),
+        "ai_max_concurrency": s.get("ai_max_concurrency", 2),
+        "ai_temperature": s.get("ai_temperature", 0.1),
         "ai_debug": os.getenv("KASHAT_AI_DEBUG", "false").lower() == "true",
+        "ai_openai_api_key_set": openai_key_set,
+        "ai_openai_model": s.get("ai_openai_model", "gpt-4o-mini"),
+        "ai_lmstudio_model": s.get("ai_lmstudio_model", ""),
     }
 
 
@@ -127,6 +228,34 @@ def update_ai_settings(body: AISettingsBody):
 
     if body.ai_provider is not None:
         s["ai_provider"] = str(body.ai_provider)
+    if body.ai_openai_api_key is not None:
+        s["ai_openai_api_key"] = str(body.ai_openai_api_key)
+    if body.ai_openai_base_url is not None:
+        s["ai_openai_base_url"] = str(body.ai_openai_base_url)
+    if body.ai_openai_model is not None:
+        s["ai_openai_model"] = str(body.ai_openai_model)
+    if body.ai_lmstudio_base_url is not None:
+        s["ai_lmstudio_base_url"] = str(body.ai_lmstudio_base_url)
+    if body.ai_lmstudio_model is not None:
+        s["ai_lmstudio_model"] = str(body.ai_lmstudio_model)
+    if body.ai_timeout is not None:
+        s["ai_timeout"] = float(body.ai_timeout)
+    if body.ai_connect_timeout is not None:
+        s["ai_connect_timeout"] = float(body.ai_connect_timeout)
+    if body.ai_max_retries is not None:
+        s["ai_max_retries"] = int(body.ai_max_retries)
+    if body.ai_retry_min_wait is not None:
+        s["ai_retry_min_wait"] = float(body.ai_retry_min_wait)
+    if body.ai_retry_max_wait is not None:
+        s["ai_retry_max_wait"] = float(body.ai_retry_max_wait)
+    if body.ai_retry_multiplier is not None:
+        s["ai_retry_multiplier"] = float(body.ai_retry_multiplier)
+    if body.ai_retry_jitter is not None:
+        s["ai_retry_jitter"] = bool(body.ai_retry_jitter)
+    if body.ai_max_concurrency is not None:
+        s["ai_max_concurrency"] = int(body.ai_max_concurrency)
+    if body.ai_temperature is not None:
+        s["ai_temperature"] = float(body.ai_temperature)
     if body.ai_auto_categorize_on_import is not None:
         s["ai_auto_categorize_on_import"] = bool(body.ai_auto_categorize_on_import)
     if body.ai_auto_categorize_min_conf is not None:

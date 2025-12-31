@@ -62,9 +62,9 @@ def test_auth_dependencies_and_flags(db_conn, monkeypatch):
 
     assert asyncio.run(auth.get_current_user_optional(None)) is None
 
-    monkeypatch.setenv("LEDGERLOOP_ALLOW_REGISTRATION", "true")
+    monkeypatch.setenv("KASHAT_ALLOW_REGISTRATION", "true")
     assert auth.is_registration_enabled() is True
-    monkeypatch.setenv("LEDGERLOOP_ALLOW_REGISTRATION", "false")
+    monkeypatch.setenv("KASHAT_ALLOW_REGISTRATION", "false")
     assert auth.is_registration_enabled() is False
 
     assert auth.require_admin(None) is True

@@ -39,11 +39,11 @@ class TestTransfersV2Eval(unittest.TestCase):
             # insert
             a_id = f"a{i}"
             b_id = f"b{i}"
-            conn.execute("INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", [a_id, "acc1", base, -amt, "USD", desc_from.lower(), None, a_id, None])
-            conn.execute("INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", [b_id, "acc2", base + timedelta(days=1), amt, "USD", desc_to.lower(), None, b_id, None])
+            conn.execute('INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)', [a_id, "acc1", base, -amt, "USD", desc_from.lower(), None, a_id, None])
+            conn.execute('INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)', [b_id, "acc2", base + timedelta(days=1), amt, "USD", desc_to.lower(), None, b_id, None])
             truth_pairs.append({"left": min(a_id, b_id), "right": max(a_id, b_id)})
         # noise
-        conn.execute("INSERT INTO transaction (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES ('n1','acc3',?, -5.0,'USD','coffee',NULL,'n1',NULL,CURRENT_TIMESTAMP)", [base])
+        conn.execute('INSERT INTO "transaction" (id, account_id, posted_at, amount, currency, description_norm, external_id, fingerprint, source_raw_id, created_at) VALUES (\'n1\',\'acc3\',?, -5.0,\'USD\',\'coffee\',NULL,\'n1\',NULL,CURRENT_TIMESTAMP)', [base])
 
         res = suggest_transfers_v2()
         # collect suggestions

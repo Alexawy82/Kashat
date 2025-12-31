@@ -9,6 +9,8 @@ const nextConfig = {
     NEXT_PUBLIC_WS_TOKEN: process.env.NEXT_PUBLIC_WS_TOKEN || 'MaroMaro',
     // Default off to reduce CPU; can be overridden or toggled at runtime via localStorage('LEDGERLOOP_REALTIME')
     NEXT_PUBLIC_ENABLE_REALTIME: process.env.NEXT_PUBLIC_ENABLE_REALTIME || '0',
+    NEXT_PUBLIC_BACKEND_ORIGIN:
+      process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.KASHAT_BACKEND_ORIGIN || '',
   },
   webpack: (config, { dev }) => {
     if (dev) {

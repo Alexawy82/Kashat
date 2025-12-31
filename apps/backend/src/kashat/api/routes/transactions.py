@@ -226,6 +226,32 @@ def transactions_stats(
     return {"total": int(row[0] or 0), "min_date": row[1], "max_date": row[2]}
 
 
+@router.get("/filter-stats")
+def get_filter_stats():
+    """Return all filter counts in a single query for the transactions page."""
+    conn = get_conn()
+
+    # Single query with conditional counts (excludes transfers)
+    row = conn.execute("""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN tc.category_id IS NULL THEN 1 ELSE 0 END) as uncategorized,
+            SUM(CASE WHEN t.is_business = 1 THEN 1 ELSE 0 END) as business,
+            SUM(CASE WHEN t.is_income = 1 THEN 1 ELSE 0 END) as income
+        FROM [transaction] t
+        LEFT JOIN transaction_category tc ON t.id = tc.tx_id
+        LEFT JOIN match_transfer mt ON (t.id = mt.left_tx_id OR t.id = mt.right_tx_id) AND mt.decided_at IS NOT NULL
+        WHERE (mt.left_tx_id IS NULL AND mt.right_tx_id IS NULL)
+    """).fetchone()
+
+    return {
+        "total": row[0] or 0,
+        "uncategorized": row[1] or 0,
+        "business": row[2] or 0,
+        "income": row[3] or 0
+    }
+
+
 @router.get("/accounts_summary")
 def accounts_summary():
     """Return a small diagnostic summary for transaction imports."""
@@ -272,6 +298,111 @@ class PatchTxBody(BaseModel):
     p2p_direction: str | None = None
     p2p_counterparty: str | None = None
     ai_merchant_name: str | None = None
+
+
+class CreateTransactionBody(BaseModel):
+    """Body for creating a manual transaction."""
+    account_id: str
+    posted_at: date
+    amount: float
+    description: str
+    category_id: Optional[str] = None
+    is_income: bool = False
+    is_business: bool = False
+    notes: Optional[str] = None
+
+
+@router.post("")
+def create_transaction(body: CreateTransactionBody):
+    """Create a new manual transaction.
+
+    This is for adding transactions that weren't imported from a bank statement.
+    """
+    import hashlib
+    import json as _json
+
+    conn = get_conn()
+    tx_id = str(uuid.uuid4())
+
+    # Verify account exists
+    account = conn.execute(
+        "SELECT id FROM account WHERE id = ?",
+        [body.account_id]
+    ).fetchone()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    # Verify category exists if provided
+    if body.category_id:
+        cat = conn.execute(
+            "SELECT id FROM category WHERE id = ?",
+            [body.category_id]
+        ).fetchone()
+        if not cat:
+            raise HTTPException(status_code=404, detail="Category not found")
+
+    # Create fingerprint for deduplication
+    fingerprint_data = f"{body.account_id}|{body.posted_at}|{body.amount}|{body.description}"
+    fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()[:32]
+
+    # Check for duplicate
+    existing = conn.execute(
+        "SELECT id FROM [transaction] WHERE fingerprint = ?",
+        [fingerprint]
+    ).fetchone()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate transaction exists with id {existing[0]}"
+        )
+
+    now = datetime.now(UTC).isoformat()
+
+    # Insert transaction
+    conn.execute(
+        """
+        INSERT INTO [transaction] (
+            id, account_id, posted_at, amount, currency, description_norm,
+            fingerprint, is_business, is_income, is_adjustment, created_at
+        ) VALUES (?, ?, ?, ?, 'USD', ?, ?, ?, ?, 0, ?)
+        """,
+        [
+            tx_id,
+            body.account_id,
+            str(body.posted_at),
+            body.amount,
+            body.description,
+            fingerprint,
+            body.is_business,
+            body.is_income,
+            now
+        ]
+    )
+
+    # Assign category if provided
+    if body.category_id:
+        conn.execute(
+            "INSERT INTO transaction_category (tx_id, category_id, applied_by) VALUES (?, ?, ?)",
+            [tx_id, body.category_id, "manual"]
+        )
+
+    # Log the creation
+    conn.execute(
+        "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [str(uuid.uuid4()), "transaction", tx_id, "create", _json.dumps(body.dict()), now, "user"]
+    )
+
+    return {
+        "id": tx_id,
+        "account_id": body.account_id,
+        "posted_at": str(body.posted_at),
+        "amount": body.amount,
+        "description": body.description,
+        "category_id": body.category_id,
+        "is_income": body.is_income,
+        "is_business": body.is_business,
+        "created_at": now
+    }
 
 
 @router.patch("/{tx_id}")
@@ -358,6 +489,43 @@ async def assign_category(tx_id: str, body: AssignCategoryBody):
         ],
     )
     return {"tx_id": tx_id, "category_id": body.category_id}
+
+
+class MarkIncomeBody(BaseModel):
+    is_income: bool = True
+
+
+@router.post("/{tx_id}/mark-income")
+def mark_income(tx_id: str, body: MarkIncomeBody):
+    """Mark a transaction as income (or not income).
+
+    Use this to manually identify income transactions that weren't
+    automatically detected, or to correct false positives.
+    """
+    from ...income_detector import mark_transaction_income
+
+    result = mark_transaction_income(tx_id, body.is_income)
+
+    if not result.get('success'):
+        raise HTTPException(status_code=404, detail=result.get('error', 'Failed to mark income'))
+
+    # Log the action
+    import json as _json
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            str(uuid.uuid4()),
+            "transaction",
+            tx_id,
+            "mark_income",
+            _json.dumps({"is_income": body.is_income}),
+            datetime.now(UTC),
+            "user",
+        ],
+    )
+
+    return result
 
 
 @router.delete("/{tx_id}")
@@ -491,6 +659,128 @@ def bulk_mark_reviewed(body: BulkReviewBody) -> dict:
     )
 
     return {"reviewed": len(valid_ids), "tx_ids": valid_ids}
+
+
+class BulkUpdateBody(BaseModel):
+    """Bulk update multiple transactions."""
+    ids: list[str]
+    updates: dict  # category_id, is_business, is_income
+
+
+class BulkDeleteBody(BaseModel):
+    """Bulk delete multiple transactions."""
+    ids: list[str]
+
+
+@router.post("/bulk-update")
+def bulk_update_transactions(body: BulkUpdateBody):
+    """Bulk update multiple transactions with the same changes."""
+    conn = get_conn()
+    import json as _json
+
+    if not body.ids:
+        return {"updated": 0, "tx_ids": []}
+
+    # Dedupe and validate IDs
+    tx_ids = list(dict.fromkeys(body.ids))
+    qmarks = ",".join(["?"] * len(tx_ids))
+    existing = conn.execute(
+        f"SELECT id FROM [transaction] WHERE id IN ({qmarks})",
+        tx_ids
+    ).fetchall()
+    existing_ids = {row[0] for row in existing}
+    valid_ids = [tid for tid in tx_ids if tid in existing_ids]
+
+    if not valid_ids:
+        return {"updated": 0, "tx_ids": []}
+
+    # Build update statement for transaction fields
+    sets = []
+    params = []
+    updates = body.updates or {}
+
+    if "is_business" in updates:
+        sets.append("is_business = ?")
+        params.append(updates["is_business"])
+
+    if "is_income" in updates:
+        sets.append("is_income = ?")
+        params.append(updates["is_income"])
+
+    # Update transaction fields if any
+    if sets:
+        qmarks = ",".join(["?"] * len(valid_ids))
+        conn.execute(
+            f"UPDATE [transaction] SET {', '.join(sets)} WHERE id IN ({qmarks})",
+            params + valid_ids
+        )
+
+    # Handle category updates separately (transaction_category table)
+    if "category_id" in updates and updates["category_id"]:
+        category_id = updates["category_id"]
+        # Verify category exists
+        cat = conn.execute("SELECT 1 FROM category WHERE id = ?", [category_id]).fetchone()
+        if cat:
+            for tx_id in valid_ids:
+                conn.execute("DELETE FROM transaction_category WHERE tx_id = ?", [tx_id])
+                conn.execute(
+                    "INSERT INTO transaction_category (tx_id, category_id, applied_by) VALUES (?, ?, ?)",
+                    [tx_id, category_id, "bulk"]
+                )
+
+    # Log the bulk action
+    now = datetime.now(UTC).isoformat()
+    conn.execute(
+        "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [str(uuid.uuid4()), "transaction", "bulk", "bulk_update", _json.dumps({"tx_ids": valid_ids, "updates": updates}), now, "user"],
+    )
+
+    return {"updated": len(valid_ids), "tx_ids": valid_ids}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_transactions(body: BulkDeleteBody):
+    """Bulk delete multiple transactions."""
+    conn = get_conn()
+    import json as _json
+
+    if not body.ids:
+        return {"deleted": 0, "tx_ids": []}
+
+    # Dedupe and validate IDs
+    tx_ids = list(dict.fromkeys(body.ids))
+    qmarks = ",".join(["?"] * len(tx_ids))
+    existing = conn.execute(
+        f"SELECT id FROM [transaction] WHERE id IN ({qmarks})",
+        tx_ids
+    ).fetchall()
+    existing_ids = {row[0] for row in existing}
+    valid_ids = [tid for tid in tx_ids if tid in existing_ids]
+
+    if not valid_ids:
+        return {"deleted": 0, "tx_ids": []}
+
+    # Delete all references first
+    qmarks = ",".join(["?"] * len(valid_ids))
+    conn.execute(f"DELETE FROM transaction_category WHERE tx_id IN ({qmarks})", valid_ids)
+    conn.execute(f"DELETE FROM transaction_tag WHERE tx_id IN ({qmarks})", valid_ids)
+    # For match_transfer, we need to handle both left and right columns
+    for tx_id in valid_ids:
+        conn.execute("DELETE FROM match_transfer WHERE left_tx_id = ? OR right_tx_id = ?", [tx_id, tx_id])
+    conn.execute(f"DELETE FROM recurring_tx WHERE tx_id IN ({qmarks})", valid_ids)
+    conn.execute(f"DELETE FROM transaction_ingest WHERE tx_id IN ({qmarks})", valid_ids)
+
+    # Delete transactions
+    conn.execute(f"DELETE FROM [transaction] WHERE id IN ({qmarks})", valid_ids)
+
+    # Log the bulk delete
+    now = datetime.now(UTC).isoformat()
+    conn.execute(
+        "INSERT INTO event_log (id, entity_type, entity_id, action, payload_json, ts, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [str(uuid.uuid4()), "transaction", "bulk", "bulk_delete", _json.dumps({"tx_ids": valid_ids}), now, "user"],
+    )
+
+    return {"deleted": len(valid_ids), "tx_ids": valid_ids}
 
 
 @router.post("/{tx_id}/review")
