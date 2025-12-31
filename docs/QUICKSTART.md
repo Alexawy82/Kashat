@@ -24,7 +24,7 @@ Before you begin, ensure you have:
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/Alexawy82/Floss.git kashat
+git clone https://github.com/Alexawy82/Kashat.git kashat
 cd kashat
 ```
 
@@ -254,8 +254,8 @@ docker compose up -d
 ## Getting Help
 
 - **Documentation:** [docs/](../docs/)
-- **Issues:** [GitHub Issues](https://github.com/Alexawy82/Floss/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/Alexawy82/Floss/discussions)
+- **Issues:** [GitHub Issues](https://github.com/Alexawy82/Kashat/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Alexawy82/Kashat/discussions)
 
 ---
 

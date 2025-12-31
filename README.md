@@ -29,14 +29,36 @@
 
 ---
 
+## 🚀 Quick Start
+
+Get running in 30 seconds:
+
+```bash
+# Clone
+git clone https://github.com/Alexawy82/Kashat.git && cd Kashat
+
+# Configure
+cp .env.example .env
+echo "KASHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+
+# Launch
+docker compose up -d
+
+# Open http://localhost:3000
+```
+
+**That's it.** Full setup guide: [docs/QUICKSTART.md](docs/QUICKSTART.md)
+
+---
+
 ## Table of Contents
 
+- [Quick Start](#-quick-start)
 - [The Story](#-the-story)
 - [Why Kashat](#-why-kashat)
 - [Features](#-features)
 - [Demo](#-demo)
 - [Comparison](#-comparison)
-- [Quick Start](#-quick-start)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Architecture](#-architecture)
@@ -77,9 +99,9 @@ Traditional personal finance apps have a dirty secret: **you are the product**.
 | App | What They Take |
 |-----|----------------|
 | Mint | Shut down. Sold your data to Credit Karma. |
-| Rocket Money | Your data + $72-144/year + 35-60% of any savings |
-| Albert | Your data + $120-480/year + cash advance fees |
-| YNAB | $99/year for glorified spreadsheets |
+| Rocket Money | Your data + $72-144/year + 35-60% of first-year savings |
+| Albert | Your data + $180-480/year + cash advance fees |
+| YNAB | $109/year for glorified spreadsheets |
 
 ### The Solution
 
@@ -216,7 +238,7 @@ Traditional personal finance apps have a dirty secret: **you are the product**.
 
 | Feature | Kashat | Rocket Money | Albert | Mint† | YNAB |
 |---------|:------:|:------------:|:------:|:----:|:----:|
-| **Price** | **Free** | $6-12/mo | $10-40/mo | Dead | $14.99/mo |
+| **Price** | **Free** | $6-12/mo | $15-40/mo | Dead | $14.99/mo |
 | **Self-Hosted** | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Local AI** | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Works Offline** | ✅ | ❌ | ❌ | ❌ | ❌ |
@@ -242,7 +264,7 @@ Traditional personal finance apps have a dirty secret: **you are the product**.
     │                                                     │
     │  Kashat        ▏ $0                                │
     │                                                     │
-    │  YNAB          ████████████████▏ $180              │
+    │  YNAB          ██████████████▏ $109                │
     │                                                     │
     │  Rocket Money  ██████████████████████▏ $144        │
     │                                                     │
@@ -252,34 +274,9 @@ Traditional personal finance apps have a dirty secret: **you are the product**.
                          $0   $100  $200  $300  $400  $500
 ```
 
+*Prices as of December 2024. Rocket Money negotiation fee: 35-60% of first-year savings.*
+
 **Switch to Kashat and save up to $480/year.**
-
----
-
-## 🚀 Quick Start
-
-### One-Line Install (Docker)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Alexawy82/Floss/main/scripts/install.sh | bash
-```
-
-### Manual Quick Start
-
-```bash
-# Clone
-git clone https://github.com/Alexawy82/Floss.git kashat && cd kashat
-
-# Configure
-cp .env.example .env
-
-# Launch
-docker compose up -d
-
-# Open http://localhost:3000
-```
-
-**That's it.** You're running a privacy-first finance platform.
 
 ---
 
@@ -784,9 +781,7 @@ Security is paramount for a finance application.
 
 **Please do not open public issues for security vulnerabilities.**
 
-Email security concerns to: **[security email]**
-
-See [SECURITY.md](SECURITY.md) for our security policy.
+Instead, please open a private security advisory via [GitHub Security Advisories](../../security/advisories/new).
 
 ---
 
@@ -879,7 +874,7 @@ Built as a privacy-respecting alternative to commercial finance apps that moneti
 
 ### ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Alexawy82/Floss&type=Date)](https://star-history.com/#Alexawy82/Floss&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Alexawy82/Kashat&type=Date)](https://star-history.com/#Alexawy82/Kashat&Date)
 
 ---
 

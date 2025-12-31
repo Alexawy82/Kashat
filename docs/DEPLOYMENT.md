@@ -45,7 +45,7 @@ This guide covers deploying Kashat in various environments, from local developme
 
 ```bash
 # Clone repository
-git clone https://github.com/Alexawy82/Floss.git kashat
+git clone https://github.com/Alexawy82/Kashat.git kashat
 cd kashat
 
 # Create Python virtual environment
@@ -99,7 +99,7 @@ npm run dev
 
 ```bash
 # Clone and configure
-git clone https://github.com/Alexawy82/Floss.git kashat
+git clone https://github.com/Alexawy82/Kashat.git kashat
 cd kashat
 cp .env.example .env
 
@@ -201,7 +201,7 @@ sudo chown $USER:$USER /opt/kashat
 
 # Clone and setup
 cd /opt/kashat
-git clone https://github.com/Alexawy82/Floss.git .
+git clone https://github.com/Alexawy82/Kashat.git .
 python3.11 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -482,7 +482,7 @@ sudo usermod -aG docker $USER
 sudo apt install docker-compose-plugin
 
 # Clone and deploy
-git clone https://github.com/Alexawy82/Floss.git kashat
+git clone https://github.com/Alexawy82/Kashat.git kashat
 cd kashat
 cp .env.example .env
 echo "KASHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
@@ -808,8 +808,8 @@ docker compose up -d
 ## Support
 
 - **Documentation:** [docs/](.)
-- **Issues:** [GitHub Issues](https://github.com/Alexawy82/Floss/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/Alexawy82/Floss/discussions)
+- **Issues:** [GitHub Issues](https://github.com/Alexawy82/Kashat/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Alexawy82/Kashat/discussions)
 
 ---
 
