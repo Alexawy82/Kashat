@@ -462,6 +462,118 @@ export function usePatchTransaction() {
 
 // ==================== DETECTION ====================
 
+// Run full detection pipeline (all detectors + dedup + recurring + merge + cancellation)
+export function useRunFullPipeline() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (params?: { account_id?: string }) => {
+      const { data, error } = await client.post('/api/detect/full-pipeline', {
+        params: { query: params }
+      })
+      if (error) throw new Error('Failed to run full pipeline')
+      return data as { status: string; accounts: number; message: string }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['recurring-suggestions'] })
+      queryClient.invalidateQueries({ queryKey: ['recurring-confirmed'] })
+      queryClient.invalidateQueries({ queryKey: ['duplicates'] })
+    }
+  })
+}
+
+// Run deduplication detection
+export function useRunDeduplication() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (params?: {
+      account_id?: string
+      days_window?: number
+      auto_merge_threshold?: number
+    }) => {
+      const { data, error } = await client.post('/api/detect/dedup', {
+        params: { query: params }
+      })
+      if (error) throw new Error('Failed to run deduplication')
+      return data as { status: string; message: string }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['duplicates'] })
+    }
+  })
+}
+
+// Run cancellation detection
+export function useRunCancellationDetection() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (params?: { auto_update?: boolean }) => {
+      const { data, error } = await client.post('/api/detect/cancellations', {
+        params: { query: { auto_update: params?.auto_update ?? false } }
+      })
+      if (error) throw new Error('Failed to run cancellation detection')
+      return data as {
+        status: string
+        likely_cancelled_count: number
+        auto_updated: boolean
+        series: Array<{
+          series_id: string
+          name: string
+          last_date: string
+          cadence: string
+          amount: number
+          missed_payments: number
+          health_score: number
+        }>
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-confirmed'] })
+      queryClient.invalidateQueries({ queryKey: ['recurring-suggestions'] })
+      queryClient.invalidateQueries({ queryKey: ['cancellation-risks'] })
+    }
+  })
+}
+
+// Merge duplicate recurring series
+export function useMergeDuplicateSeries() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.post('/api/detect/merge-duplicate-series')
+      if (error) throw new Error('Failed to merge duplicate series')
+      return data as { status: string; merged: number; details: any[] }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-confirmed'] })
+      queryClient.invalidateQueries({ queryKey: ['recurring-suggestions'] })
+    }
+  })
+}
+
+// Run subscription workflow (recurring + merge + link + cancellation)
+export function useRunSubscriptionWorkflow() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.post('/api/detect/subscription-workflow')
+      if (error) throw new Error('Failed to run subscription workflow')
+      return data as { status: string; message: string }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-confirmed'] })
+      queryClient.invalidateQueries({ queryKey: ['recurring-suggestions'] })
+      queryClient.invalidateQueries({ queryKey: ['cancellation-risks'] })
+    }
+  })
+}
+
 // Run all detectors at once (P2P, Income, Adjustments, Zelle)
 export function useRunAllDetectors() {
   const queryClient = useQueryClient()

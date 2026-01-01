@@ -12,18 +12,32 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
+  Copy,
   Loader2,
   RefreshCw,
   Repeat,
+  SearchX,
   Sparkles,
   X,
   XCircle,
 } from 'lucide-react'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   useConfirmedRecurring,
   useRecurringSuggestions,
   useRunRecurringDetection,
+  useRunDeduplication,
+  useRunCancellationDetection,
+  useMergeDuplicateSeries,
 } from '@/hooks/useAutomation'
 import {
   useAllRecurring,
@@ -92,6 +106,9 @@ export default function SubscriptionsPage() {
   const confirmRecurring = useConfirmWithLearning()
   const rejectRecurring = useRejectWithLearning()
   const runDetection = useRunRecurringDetection()
+  const runDedup = useRunDeduplication()
+  const runCancellation = useRunCancellationDetection()
+  const mergeDuplicates = useMergeDuplicateSeries()
 
   const candidates = useMemo(() => (suggestionsData as any[]) || [], [suggestionsData])
   const confirmedList = useMemo(() => (confirmed as any[]) || [], [confirmed])
@@ -170,6 +187,57 @@ export default function SubscriptionsPage() {
 
   const handleRunDetection = () => {
     runDetection.mutate({ min_occurrences: 2, include_short_cadence: includeShortCadence })
+  }
+
+  const handleRunDedup = () => {
+    runDedup.mutate({ days_window: 30 }, {
+      onSuccess: (result) => {
+        setActionResult({ type: 'success', message: result.message || 'Deduplication queued' })
+        setTimeout(() => setActionResult(null), 3000)
+      },
+      onError: () => {
+        setActionResult({ type: 'error', message: 'Failed to run deduplication' })
+        setTimeout(() => setActionResult(null), 3000)
+      }
+    })
+  }
+
+  const handleRunCancellation = () => {
+    runCancellation.mutate({ auto_update: true }, {
+      onSuccess: (result) => {
+        const count = result.likely_cancelled_count || 0
+        setActionResult({
+          type: 'success',
+          message: count > 0
+            ? `Found ${count} likely cancelled subscription${count > 1 ? 's' : ''}`
+            : 'No cancelled subscriptions detected'
+        })
+        setTimeout(() => setActionResult(null), 3000)
+      },
+      onError: () => {
+        setActionResult({ type: 'error', message: 'Failed to run cancellation detection' })
+        setTimeout(() => setActionResult(null), 3000)
+      }
+    })
+  }
+
+  const handleMergeDuplicates = () => {
+    mergeDuplicates.mutate(undefined, {
+      onSuccess: (result) => {
+        const count = result.merged || 0
+        setActionResult({
+          type: 'success',
+          message: count > 0
+            ? `Merged ${count} duplicate series`
+            : 'No duplicate series found'
+        })
+        setTimeout(() => setActionResult(null), 3000)
+      },
+      onError: () => {
+        setActionResult({ type: 'error', message: 'Failed to merge duplicates' })
+        setTimeout(() => setActionResult(null), 3000)
+      }
+    })
   }
 
   const typeTabs: TypeTab[] = [
@@ -267,19 +335,42 @@ export default function SubscriptionsPage() {
                 Include weekly
               </Label>
             </div>
-            <Button
-              variant="outline"
-              onClick={handleRunDetection}
-              disabled={runDetection.isPending}
-              className="gap-2"
-            >
-              {runDetection.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              Detect Patterns
-            </Button>
+
+            {/* Detection Actions Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="gap-2">
+                  {(runDetection.isPending || runDedup.isPending || runCancellation.isPending || mergeDuplicates.isPending) ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Detect
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Detection Actions</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleRunDetection} disabled={runDetection.isPending}>
+                  <Repeat className="h-4 w-4 mr-2" />
+                  Detect Patterns
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleRunDedup} disabled={runDedup.isPending}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Find Duplicates
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleMergeDuplicates} disabled={mergeDuplicates.isPending}>
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Merge Duplicate Series
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleRunCancellation} disabled={runCancellation.isPending}>
+                  <SearchX className="h-4 w-4 mr-2" />
+                  Detect Cancellations
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         }
       />

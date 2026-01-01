@@ -756,8 +756,10 @@ async def _process_import_with_workflow(run_id: str, account_id: str):
 async def _run_builtin_detectors(account_id: str):
     """Run all detection pipelines in correct order post-import.
 
-    Order: Zelle → Income → Adjustments → Transfers → P2P → Recurring
+    Order: Zelle → Income → Adjustments → Dedup → Transfers → P2P → Recurring → Merge Series → Update Status
     Transfer and P2P MUST run before Recurring to exclude them from recurring patterns.
+    Dedup runs before pattern detection to clean up duplicate transactions first.
+    Merge duplicate series after recurring detection to consolidate (e.g., "Google Fiber" variants).
     """
     try:
         conn = get_conn()
@@ -786,7 +788,27 @@ async def _run_builtin_detectors(account_id: str):
         for tx_id in mark_adjustments(records):
             conn.execute("UPDATE [transaction] SET is_adjustment = TRUE WHERE id = ?", [tx_id])
 
-        # 4. Transfer detection - BEFORE recurring to exclude from patterns
+        # 4. Transaction Deduplication - BEFORE pattern detection
+        # Detect and auto-resolve high-confidence duplicates to clean data before recurring detection
+        try:
+            from ...ai_intelligent_dedup import get_intelligent_dedup_detector
+            dedup_detector = get_intelligent_dedup_detector()
+            duplicates = await dedup_detector.detect_duplicates(
+                account_id=account_id,
+                days_window=14,  # Check recent imports
+                batch_size=1000
+            )
+            if duplicates:
+                # Auto-resolve high-confidence duplicates (>= 0.92)
+                resolve_result = await dedup_detector.auto_resolve_duplicates(
+                    duplicates,
+                    auto_merge_threshold=0.92
+                )
+                print(f"Dedup detection: {len(duplicates)} candidates, {resolve_result.get('auto_merged', 0)} auto-merged")
+        except Exception as dedup_err:
+            print(f"Dedup detection error (non-fatal): {dedup_err}")
+
+        # 5. Transfer detection - BEFORE recurring to exclude from patterns
         try:
             from ...transfers import suggest_transfers_v2
             transfer_result = suggest_transfers_v2()
@@ -794,7 +816,7 @@ async def _run_builtin_detectors(account_id: str):
         except Exception as transfer_err:
             print(f"Transfer detection error (non-fatal): {transfer_err}")
 
-        # 5. Full P2P detection - BEFORE recurring to exclude from patterns
+        # 6. Full P2P detection - BEFORE recurring to exclude from patterns
         try:
             from ...p2p_detection import run_p2p_detection
             p2p_result = run_p2p_detection(limit=10000)
@@ -802,7 +824,7 @@ async def _run_builtin_detectors(account_id: str):
         except Exception as p2p_err:
             print(f"P2P detection error (non-fatal): {p2p_err}")
 
-        # 6. Recurring detection - AFTER transfers/P2P are marked
+        # 7. Recurring detection - AFTER transfers/P2P are marked
         try:
             from ...recurring import suggest_recurring
             suggest_result = suggest_recurring(min_occurrences=3)
@@ -810,6 +832,44 @@ async def _run_builtin_detectors(account_id: str):
                 print(f"Recurring detection: found {len(suggest_result['candidates'])} candidates")
         except Exception as rec_err:
             print(f"Recurring detection error (non-fatal): {rec_err}")
+
+        # 8. Merge duplicate recurring series - AFTER recurring detection
+        # Consolidates series like "google *fiber viewca" and "google *fiber" into one
+        try:
+            from ...recurring import merge_duplicate_merchants
+            merge_result = merge_duplicate_merchants(conn)
+            if merge_result.get("merged", 0) > 0:
+                print(f"Series merge: {merge_result.get('merged', 0)} duplicate series merged")
+        except Exception as merge_err:
+            print(f"Series merge error (non-fatal): {merge_err}")
+
+        # 9. Update recurring series status (detect cancellations, late payments)
+        try:
+            from ...recurring import calculate_series_status
+            # Update status for all active series
+            series_rows = conn.execute("""
+                SELECT id, last_date, next_date, cadence
+                FROM recurring_series
+                WHERE status = 'confirmed'
+            """).fetchall()
+            updated_count = 0
+            for series_id, last_date, next_date, cadence in series_rows:
+                try:
+                    status_info = calculate_series_status(last_date, next_date, cadence)
+                    if status_info.get("status") == "likely_cancelled":
+                        conn.execute("""
+                            UPDATE recurring_series
+                            SET health_status = 'likely_cancelled', health_score = ?
+                            WHERE id = ?
+                        """, [status_info.get("health_score", 0.1), series_id])
+                        updated_count += 1
+                except Exception:
+                    pass
+            if updated_count > 0:
+                print(f"Status update: {updated_count} series marked as likely cancelled")
+        except Exception as status_err:
+            print(f"Status update error (non-fatal): {status_err}")
+
     except Exception as e:
         print(f"Post-import detectors error: {e}")
 

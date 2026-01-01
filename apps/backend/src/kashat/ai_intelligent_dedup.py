@@ -62,7 +62,7 @@ class DuplicateResolution:
 
 class IntelligentDuplicateDetector:
     """Advanced ML-based duplicate detection and resolution system"""
-    
+
     def __init__(self):
         self._similarity_weights = {
             'amount_exact': 0.35,
@@ -71,13 +71,56 @@ class IntelligentDuplicateDetector:
             'merchant_similarity': 0.15,
             'context_similarity': 0.05
         }
-        
+
         self._confidence_thresholds = {
             'auto_merge': 0.92,
             'high_confidence': 0.85,
             'medium_confidence': 0.70,
             'low_confidence': 0.50
         }
+
+        # Ensure required tables exist
+        self._ensure_tables()
+
+    def _ensure_tables(self):
+        """Create required tables if they don't exist"""
+        try:
+            conn = get_conn()
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS duplicate_resolution (
+                    id TEXT PRIMARY KEY,
+                    candidate_id TEXT,
+                    transaction_id_1 TEXT,
+                    transaction_id_2 TEXT,
+                    resolution_type TEXT,
+                    confidence REAL,
+                    user_decision TEXT,
+                    merge_result_json TEXT,
+                    created_at TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS duplicate_feedback (
+                    id TEXT PRIMARY KEY,
+                    candidate_id TEXT,
+                    user_decision TEXT,
+                    feedback_notes TEXT,
+                    original_confidence REAL,
+                    created_at TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS duplicate_review_queue (
+                    id TEXT PRIMARY KEY,
+                    transaction_id_1 TEXT,
+                    transaction_id_2 TEXT,
+                    confidence REAL,
+                    status TEXT DEFAULT 'pending',
+                    created_at TEXT
+                )
+            """)
+        except Exception as e:
+            print(f"Error creating dedup tables: {e}")
     
     async def detect_duplicates(
         self,

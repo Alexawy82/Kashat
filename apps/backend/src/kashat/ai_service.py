@@ -1120,9 +1120,23 @@ class AIService:
             except Exception as e:
                 AI_ERRORS.labels(provider="lmstudio").inc()
                 logger.warning(f"LM Studio analysis failed, falling back to local: {e}")
-        # Provider: Auto escalation (LM Studio -> OpenAI -> Local)
+        # Provider: Auto escalation (OpenAI -> LM Studio -> Local)
+        # Prioritize OpenAI when configured since it's more reliable than local LM Studio
         if provider == "auto":
-            # First try LM Studio if available
+            # First try OpenAI if available (cloud = more reliable)
+            if self.openai_service:
+                try:
+                    async with self._sem:
+                        prov = "openai"
+                        AI_CALLS.labels(provider=prov).inc()
+                        start = time.perf_counter()
+                        res = await asyncio.wait_for(self.openai_service.analyze_transaction(description, amount, model=model), timeout=timeout_s)
+                        AI_LATENCY.labels(provider=prov).observe(time.perf_counter() - start)
+                        return res
+                except Exception as e:
+                    AI_ERRORS.labels(provider="openai").inc()
+                    logger.warning(f"OpenAI in auto failed: {e}")
+            # Fall back to LM Studio if OpenAI unavailable
             if self.lmstudio_service:
                 try:
                     async with self._sem:
@@ -1136,19 +1150,6 @@ class AIService:
                 except Exception as e:
                     AI_ERRORS.labels(provider="lmstudio").inc()
                     logger.warning(f"LM Studio in auto failed: {e}")
-            # Escalate to OpenAI if available
-            if self.openai_service:
-                try:
-                    async with self._sem:
-                        prov = "openai"
-                        AI_CALLS.labels(provider=prov).inc()
-                        start = time.perf_counter()
-                        res = await asyncio.wait_for(self.openai_service.analyze_transaction(description, amount, model=model), timeout=timeout_s)
-                        AI_LATENCY.labels(provider=prov).observe(time.perf_counter() - start)
-                        return res
-                except Exception as e:
-                    AI_ERRORS.labels(provider="openai").inc()
-                    logger.warning(f"OpenAI in auto failed: {e}")
 
         # Local heuristics (fallback or explicit 'local')
         merchant_info = self.local_service.normalize_merchant(description)
@@ -1185,7 +1186,22 @@ class AIService:
         provider = self.provider
         timeout_s = self.config.timeout
 
-        # Try LM Studio first if in auto mode
+        # Try OpenAI first if in auto mode (more reliable)
+        if provider in ("openai", "auto") and self.openai_service:
+            try:
+                async with self._sem:
+                    return await asyncio.wait_for(
+                        self.openai_service.analyze_with_prompt(
+                            prompt, max_tokens=max_tokens, task_type=task_type
+                        ),
+                        timeout=timeout_s
+                    )
+            except Exception as e:
+                if provider == "openai":
+                    raise
+                logger.warning(f"OpenAI custom prompt failed: {e}")
+
+        # Fall back to LM Studio
         if provider in ("lmstudio", "auto") and self.lmstudio_service:
             try:
                 async with self._sem:
@@ -1199,20 +1215,6 @@ class AIService:
                 if provider == "lmstudio":
                     raise
                 logger.warning(f"LM Studio custom prompt failed: {e}")
-
-        # Try OpenAI
-        if provider in ("openai", "auto") and self.openai_service:
-            try:
-                async with self._sem:
-                    return await asyncio.wait_for(
-                        self.openai_service.analyze_with_prompt(
-                            prompt, max_tokens=max_tokens, task_type=task_type
-                        ),
-                        timeout=timeout_s
-                    )
-            except Exception as e:
-                logger.warning(f"OpenAI custom prompt failed: {e}")
-                raise
 
         raise ValueError("No AI provider available for custom prompt analysis")
 
@@ -1462,14 +1464,21 @@ async def ping_ai() -> Dict[str, Any]:
 
         if provider == "auto":
             checks: List[Dict[str, Any]] = []
-            if svc.lmstudio_service is not None:
-                lm = await svc.lmstudio_service.ping()
-                lm.update({"client": "lmstudio"})
-                checks.append(lm)
+            # Run pings in parallel for faster status checks
+            tasks = []
             if svc.openai_service is not None:
-                oa = await svc.openai_service.ping()
-                oa.update({"client": "openai"})
-                checks.append(oa)
+                tasks.append(("openai", svc.openai_service.ping()))
+            if svc.lmstudio_service is not None:
+                tasks.append(("lmstudio", svc.lmstudio_service.ping()))
+
+            if tasks:
+                results_list = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
+                for (client_name, _), result in zip(tasks, results_list):
+                    if isinstance(result, Exception):
+                        checks.append({"ok": False, "error": str(result), "client": client_name})
+                    else:
+                        result.update({"client": client_name})
+                        checks.append(result)
 
             any_ok = any(c.get("ok") for c in checks)
             return {
